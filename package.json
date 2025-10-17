@@ -1,18 +1,22 @@
 {
-  "name": "tsdown-starter",
+  "name": "y-jotai",
   "version": "0.0.0",
-  "description": "A starter for creating a TypeScript package.",
+  "description": "Thin, typed bridge between Yjs types and Jotai atoms.",
   "type": "module",
   "license": "MIT",
-  "homepage": "https://github.com/author/library#readme",
+  "homepage": "https://github.com/wibus-wee/jotai-yjs#readme",
   "bugs": {
-    "url": "https://github.com/author/library/issues"
+    "url": "https://github.com/wibus-wee/jotai-yjs/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/author/library.git"
+    "url": "git+https://github.com/wibus-wee/jotai-yjs.git"
   },
-  "author": "Author Name <author.name@mail.com>",
+  "author": {
+    "email": "wibus_wee@outlook.com",
+    "name": "wibus-wee",
+    "url": "https://wibus.ren"
+  },
   "files": [
     "dist"
   ],
