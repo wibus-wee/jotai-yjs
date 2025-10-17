@@ -1,18 +1,9 @@
 import { atom, type WritableAtom } from 'jotai'
 import * as Y from 'yjs'
 import { isEqual } from 'es-toolkit/compat'
-/**
- * Thin, typed bridge between Yjs types and Jotai atoms.
- *
- * Design goals:
- * - Minimal abstraction: only subscribe, snapshot(read), and write via native Yjs ops.
- * - Narrow subscriptions by default (type.observe). Opt-in deep observation if needed.
- * - No double updates: do not set after write; rely on Y events to propagate.
- * - Type-safe with minimal unknown usage (decode/encode provide typed boundaries when needed).
- */
 
 /** Equality function used to suppress redundant updates. */
-export type Equals<T> = (a: T, b: T) => boolean;
+type Equals<T> = (a: T, b: T) => boolean;
 const defaultEquals = <T>(a: T, b: T): boolean => isEqual(a, b);
 
 type YArrayDelta<T> = Array<

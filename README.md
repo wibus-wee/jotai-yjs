@@ -10,6 +10,13 @@ Thin, typed bridge between Yjs types and Jotai atoms.
 npm install y-jotai jotai yjs
 ```
 
+## Design goals
+
+- Minimal abstraction: only subscribe, snapshot(read), and write via native Yjs ops.
+- Narrow subscriptions by default (type.observe). Opt-in deep observation if needed.
+- No double updates: do not set after write; rely on Y events to propagate.
+- Type-safe with minimal unknown usage (decode/encode provide typed boundaries when needed).
+
 ## Why would I use this?
 
 - **Single mental model:** keep using Jotai atoms in React while syncing data through Yjs.
@@ -32,13 +39,6 @@ const map = doc.getMap<string>('root')
 const snapshotAtom = createYAtom({
   y: map,
   read: (m) => m.toJSON() as Record<string, string>,
-  write: (m, next) => {
-    withTransact(m.doc, () => {
-      m.clear()
-      Object.entries(next).forEach(([key, value]) => m.set(key, value))
-    })
-  },
-  deep: true, // resubscribe on any nested change
 })
 
 // Regular Jotai usage inside your React components.
@@ -74,12 +74,6 @@ You do **not** need to split your document if you do not care about fine-grained
 const docAtom = createYAtom({
   y: doc.getMap('content'),
   read: (map) => map.toJSON(),
-  write: (map, next) => {
-    withTransact(map.doc, () => {
-      map.clear()
-      Object.entries(next).forEach(([key, value]) => map.set(key, value))
-    })
-  },
   deep: true,
 })
 ```
