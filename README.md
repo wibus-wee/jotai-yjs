@@ -2,7 +2,7 @@
 
 Thin, typed bridge between Yjs types and Jotai atoms.
 
-> This library has a high cognitive load and is still in *an experimental stage*.
+> In *an experimental stage*. Using abstractions adds mental overhead for developers.
 
 ## Installation
 
