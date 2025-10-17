@@ -4,6 +4,7 @@
   "description": "Thin, typed bridge between Yjs types and Jotai atoms.",
   "type": "module",
   "license": "MIT",
+  "packageManager": "pnpm@10.4.1",
   "homepage": "https://github.com/wibus-wee/jotai-yjs#readme",
   "bugs": {
     "url": "https://github.com/wibus-wee/jotai-yjs/issues"
