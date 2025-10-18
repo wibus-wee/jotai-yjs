@@ -31,7 +31,7 @@ importers:
         specifier: ^4.0.10
         version: 4.0.10(@types/estree@1.0.8)(@typescript-eslint/eslint-plugin@8.46.1(@typescript-eslint/parser@8.46.1(eslint@9.37.0(jiti@2.6.1))(typescript@5.9.3))(eslint@9.37.0(jiti@2.6.1))(typescript@5.9.3))(@typescript-eslint/utils@8.46.1(eslint@9.37.0(jiti@2.6.1))(typescript@5.9.3))(eslint@9.37.0(jiti@2.6.1))(tailwindcss@4.1.14)(ts-api-utils@2.1.0(typescript@5.9.3))(typescript@5.9.3)
       tsdown:
-        specifier: ^0.15.6
+        specifier: ^0.15.7
         version: 0.15.7(typescript@5.9.3)
       typescript:
         specifier: ^5.9.3
