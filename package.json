@@ -35,7 +35,7 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@types/node": "^24.9.2",
+    "@types/node": "^24.10.0",
     "bumpp": "^10.3.1",
     "eslint-config-hyoban": "^4.0.10",
     "tsdown": "^0.15.12",
