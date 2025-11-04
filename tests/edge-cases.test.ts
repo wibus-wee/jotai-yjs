@@ -22,9 +22,9 @@ describe('Edge cases', () => {
       const seen: number[] = []
 
       store.sub(atom, () => {
-        seen.push(store.get(atom))
+        seen.push(store.get(atom) as number)
       })
-      seen.push(store.get(atom)) // initial: 4
+      seen.push(store.get(atom) as number) // initial: 4
 
       arr.insert(0, [99]) // insert before index
       expect(seen.at(-1)).toBe(3) // value shifted down
@@ -41,9 +41,9 @@ describe('Edge cases', () => {
       const seen: number[] = []
 
       store.sub(atom, () => {
-        seen.push(store.get(atom))
+        seen.push(store.get(atom) as number)
       })
-      seen.push(store.get(atom)) // initial: 2
+      seen.push(store.get(atom) as number) // initial: 2
 
       arr.insert(2, [99]) // insert after index
       // May trigger due to eventFilter, but equals should prevent update
@@ -61,9 +61,9 @@ describe('Edge cases', () => {
       const seen: number[] = []
 
       store.sub(atom, () => {
-        seen.push(store.get(atom))
+        seen.push(store.get(atom) as number)
       })
-      seen.push(store.get(atom)) // initial: 3
+      seen.push(store.get(atom) as number) // initial: 3
 
       arr.delete(2, 2) // delete index 2 and 3
       expect(store.get(atom)).toBe(5) // now points to what was index 4
@@ -81,9 +81,9 @@ describe('Edge cases', () => {
       const seen: number[] = []
 
       store.sub(atom, () => {
-        seen.push(store.get(atom))
+        seen.push(store.get(atom) as number)
       })
-      seen.push(store.get(atom)) // initial: 3
+      seen.push(store.get(atom) as number) // initial: 3
 
       doc.transact(() => {
         arr.insert(0, [99])
@@ -144,9 +144,9 @@ describe('Edge cases', () => {
       const seen: number[] = []
 
       store.sub(aAtom, () => {
-        seen.push(store.get(aAtom))
+        seen.push(store.get(aAtom) as number)
       })
-      seen.push(store.get(aAtom)) // initial
+      seen.push(store.get(aAtom) as number) // initial
 
       // Multiple updates outside transaction
       map.set('a', 1)
@@ -167,9 +167,9 @@ describe('Edge cases', () => {
       const seen: number[] = []
 
       store.sub(aAtom, () => {
-        seen.push(store.get(aAtom))
+        seen.push(store.get(aAtom) as number)
       })
-      seen.push(store.get(aAtom)) // initial: 0
+      seen.push(store.get(aAtom) as number) // initial: 0
 
       doc.transact(() => {
         map.set('a', 1)
