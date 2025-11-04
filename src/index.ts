@@ -1,10 +1,11 @@
-import { atom, type WritableAtom } from 'jotai'
+import { atom, type Atom, type WritableAtom } from 'jotai'
 import * as Y from 'yjs'
 import { isEqual } from 'es-toolkit/compat'
 
 /** Equality function used to suppress redundant updates. */
 type Equals<T> = (a: T, b: T) => boolean;
 const defaultEquals = <T>(a: T, b: T): boolean => isEqual(a, b);
+const UNSET: unique symbol = Symbol('jotai-yjs/UNSET');
 
 type YArrayDelta<T> = Array<
   { retain: number } | { insert: T[] } | { delete: number }
@@ -23,16 +24,16 @@ type SubscribeEvent<T extends Y.AbstractType<any>> =
 /** Internal util: subscribe to a Y type with optional deep observation. */
 function subscribeY<T extends Y.AbstractType<any>>(
   y: T,
-  onChange: (evt: SubscribeEvent<T>) => void,
+  onChange: (evt: SubscribeEvent<T>, tr: Y.Transaction) => void,
   options?: { deep?: boolean }
 ): () => void {
   if (options?.deep) {
-    const handler = (evts: Y.YEvent<any>[], _tr: Y.Transaction) =>
-      onChange(evts);
+    const handler = (evts: Y.YEvent<any>[], tr: Y.Transaction) =>
+      onChange(evts, tr);
     y.observeDeep(handler);
     return () => y.unobserveDeep(handler);
   }
-  const handler = (evt: YEventOf<T>, _tr: Y.Transaction) => onChange(evt);
+  const handler = (evt: YEventOf<T>, tr: Y.Transaction) => onChange(evt, tr);
   y.observe(handler);
   return () => y.unobserve(handler);
 }
@@ -43,9 +44,7 @@ export function withTransact(doc: Y.Doc | null, fn: () => void): void {
   else fn();
 }
 
-export interface CreateYAtomOptions<YType extends Y.AbstractType<any>, T> {
-  /** The concrete Yjs type instance (Y.Map, Y.Array, Y.Text, ...). */
-  y: YType;
+export interface CreateYAtomSharedOptions<YType extends Y.AbstractType<any>, T> {
   /** Read function to project the Y value into a typed snapshot T. */
   read: (y: YType) => T;
   /**
@@ -54,7 +53,7 @@ export interface CreateYAtomOptions<YType extends Y.AbstractType<any>, T> {
    * the Y type is attached to a Y.Doc.
    */
   write?: (y: YType, next: T) => void;
-  /** Optional equality to suppress redundant sets. Default: Object.is. */
+  /** Optional equality to suppress redundant sets. Default: deep equality. */
   equals?: Equals<T>;
   /**
    * Observe deep changes under this Y type. Default: false (narrower, faster).
@@ -66,7 +65,17 @@ export interface CreateYAtomOptions<YType extends Y.AbstractType<any>, T> {
    * This helps narrow updates further (e.g., only when a Map key changes).
    */
   eventFilter?: (evt: YEventOf<YType>) => boolean;
+  /**
+   * When using `yAtom` as the source, optionally resubscribe to a new instance
+   * when the source atom value changes. If enabled, the previous subscription
+   * is cleaned up and a new one is installed, and a fresh snapshot is emitted.
+   */
+  resubscribeOnSourceChange?: boolean;
 }
+
+export type CreateYAtomOptions<YType extends Y.AbstractType<any>, T> =
+  | ({ y: YType; yAtom?: never } & CreateYAtomSharedOptions<YType, T>)
+  | ({ yAtom: Atom<YType>; y?: never } & CreateYAtomSharedOptions<YType, T>);
 
 /**
  * Create a typed Jotai atom bound to a specific Y type.
@@ -77,46 +86,129 @@ export interface CreateYAtomOptions<YType extends Y.AbstractType<any>, T> {
 export function createYAtom<YType extends Y.AbstractType<any>, T>(
   opts: CreateYAtomOptions<YType, T>
 ): WritableAtom<T, [T | ((prev: T) => T)], void> {
-  const { y, read, write, equals = defaultEquals, deep, eventFilter } = opts;
+  const {
+    read,
+    write,
+    equals = defaultEquals,
+    deep,
+    eventFilter,
+    resubscribeOnSourceChange,
+  } = opts as CreateYAtomSharedOptions<YType, T> &
+    Partial<{ y: YType; yAtom: Atom<YType> }>;
+  const hasYAtom = (opts as any).yAtom !== undefined;
 
-  // Initialize with a synchronous read to support SSR/hydration and test stability.
-  const base = atom<T>(read(y));
+  // Normalize source: always use an Atom<YType> as the source of truth.
+  const ySourceAtom: Atom<YType> =
+    (opts as any).yAtom ?? atom((opts as any).y as YType);
 
-  base.onMount = (set) => {
-    let prev = read(y);
-    // Ensure the latest state is visible immediately on the first mount.
-    set(prev);
+  // Snapshot cache controlled by Y event subscription and equals.
+  const snapAtom = atom<T | typeof UNSET>(UNSET);
+  const lastYAtom = atom<YType | null>(null);
 
-    const unsubscribe = subscribeY(
-      y,
-      (evt) => {
-        // For deep observation, evt can be an array; we skip filtering in that case
-        if (!Array.isArray(evt) && eventFilter && !eventFilter(evt)) return;
-        const next = read(y);
-        if (!equals(prev, next)) {
-          prev = next;
-          set(next);
-        }
-      },
-      { deep }
-    );
-    return unsubscribe;
-  };
-
-  // Writer: we do not set(base, ...) here. Y events will drive updates.
-  const writer = atom(null, (_get, _set, update: T | ((prev: T) => T)) => {
-    if (!write) return;
-    const current = read(y);
-    const next =
-      typeof update === 'function' ? (update as (p: T) => T)(current) : update
-    if (equals(current, next)) return;
-    withTransact(y.doc, () => write(y, next));
+  // Derived state for consumers: SSR/first frame returns read(get(ySourceAtom)).
+  const stateAtom = atom<T>((get) => {
+    const y = get(ySourceAtom);
+    const s = get(snapAtom);
+    if (resubscribeOnSourceChange) {
+      const lastY = get(lastYAtom);
+      if (lastY !== y) return read(y);
+    }
+    if (s !== UNSET) return s as T;
+    return read(y);
   });
 
-  return atom(
-    (get) => get(base),
-    (_get, set, update) => set(writer, update)
+  // Subscription manager: installs Y observers and syncs snapshot when events fire.
+  // Uses AbortSignal to cleanup and re-run when ySourceAtom changes.
+  type SubAction = { type: 'sync' } | { type: 'init' };
+
+  // For disabling resubscribe, capture the initial Y per-store and reuse it.
+  const yRefAtom = atom<YType | null>(null);
+  const subAtom = atom<null, [SubAction?], void>(
+    (get, { signal, setSelf }) => {
+      // Determine which Y to subscribe to
+      let y: YType;
+      if (resubscribeOnSourceChange) {
+        y = get(ySourceAtom);
+      } else {
+        const yRef = get(yRefAtom);
+        y = yRef ?? get(ySourceAtom);
+      }
+
+      let lastTxn: Y.Transaction | null = null;
+      const unsubscribe = subscribeY(
+        y,
+        (evt, tr) => {
+          if (!Array.isArray(evt) && eventFilter && !eventFilter(evt as any)) return;
+          if (tr && lastTxn && tr === lastTxn) return;
+          lastTxn = tr ?? null;
+          setSelf({ type: 'sync' });
+          // reset the guard after the current macrotask
+          setTimeout(() => {
+            lastTxn = null;
+          }, 0);
+        },
+        { deep }
+      );
+
+      signal.addEventListener('abort', unsubscribe);
+      return null;
+    },
+    (get, set, action) => {
+      if (!action || action.type === 'sync') {
+        const y = resubscribeOnSourceChange
+          ? get(ySourceAtom)
+          : (get(yRefAtom) ?? get(ySourceAtom));
+        const next = read(y);
+        const prev = get(snapAtom);
+        if (prev === UNSET || !equals(prev as T, next)) {
+          set(snapAtom, next);
+          set(lastYAtom, y);
+        } else {
+          // still stamp lastY to align with current source
+          set(lastYAtom, y);
+        }
+      } else if (action.type === 'init') {
+        if (!resubscribeOnSourceChange) {
+          const y = get(ySourceAtom);
+          set(yRefAtom, y);
+        }
+        // initialize snapshot for consistent first read only when using yAtom source
+        if (hasYAtom) {
+          const y = resubscribeOnSourceChange
+            ? get(ySourceAtom)
+            : (get(yRefAtom) ?? get(ySourceAtom));
+          const next = read(y);
+          const prev = get(snapAtom);
+          if (prev === UNSET || !equals(prev as T, next)) set(snapAtom, next);
+          set(lastYAtom, y);
+        }
+      }
+    }
   );
+
+  // Public atom: read state, ensure subAtom is mounted; writes transact against current Y.
+  const out = atom<T, [T | ((prev: T) => T)], void>(
+    (get) => {
+      get(subAtom);
+      return get(stateAtom);
+    },
+    (get, _set, update) => {
+      if (!write) return;
+      const y = get(ySourceAtom);
+      const current = read(y);
+      const next =
+        typeof update === 'function'
+          ? (update as (p: T) => T)(current)
+          : update;
+      if (equals(current, next)) return;
+      withTransact(y.doc, () => write(y, next));
+    }
+  );
+
+  // Initialize per-store refs and populate first snapshot on mount.
+  subAtom.onMount = (set) => set({ type: 'init' });
+
+  return out;
 }
 
 // ------------------------ Specialised factories ------------------------
