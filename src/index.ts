@@ -1,10 +1,11 @@
 import { atom, type Atom, type WritableAtom } from 'jotai'
 import * as Y from 'yjs'
-import { isEqual } from 'es-toolkit/compat'
+import diff from 'fast-diff'
+import { shallowEqual, deepEquals } from './utils'
 
 /** Equality function used to suppress redundant updates. */
 type Equals<T> = (a: T, b: T) => boolean;
-const defaultEquals = <T>(a: T, b: T): boolean => isEqual(a, b);
+const defaultEquals = <T>(a: T, b: T): boolean => shallowEqual(a, b);
 const UNSET: unique symbol = Symbol('jotai-yjs/UNSET');
 
 type YArrayDelta<T> = Array<
@@ -40,8 +41,14 @@ function subscribeY<T extends Y.AbstractType<any>>(
 
 /** Run a function inside a Y.Doc transaction when available. */
 export function withTransact(doc: Y.Doc | null, fn: () => void): void {
-  if (doc) doc.transact(fn);
-  else fn();
+  if (!doc) {
+    if (process.env.NODE_ENV !== 'production') {
+      console.warn('[y-jotai] Y type is not attached to a document. Operations may not be properly transacted.');
+    }
+    fn();
+    return;
+  }
+  doc.transact(fn);
 }
 
 export interface CreateYAtomSharedOptions<YType extends Y.AbstractType<any>, T> {
@@ -93,19 +100,26 @@ export function createYAtom<YType extends Y.AbstractType<any>, T>(
     deep,
     eventFilter,
     resubscribeOnSourceChange,
-  } = opts as CreateYAtomSharedOptions<YType, T> &
-    Partial<{ y: YType; yAtom: Atom<YType> }>;
-  const hasYAtom = (opts as any).yAtom !== undefined;
+  } = opts;
+  const hasYAtom = 'yAtom' in opts && opts.yAtom !== undefined;
 
   // Normalize source: always use an Atom<YType> as the source of truth.
-  const ySourceAtom: Atom<YType> =
-    (opts as any).yAtom ?? atom((opts as any).y as YType);
+  const ySourceAtom: Atom<YType> = hasYAtom
+    ? opts.yAtom
+    : atom(opts.y);
 
   // Snapshot cache controlled by Y event subscription and equals.
   const snapAtom = atom<T | typeof UNSET>(UNSET);
+  // Tracks the Y instance used to compute the current snapshot. This lets us
+  // detect when the source Y changes (especially when resubscribing) and avoid
+  // returning a stale snapshot.
   const lastYAtom = atom<YType | null>(null);
 
   // Derived state for consumers: SSR/first frame returns read(get(ySourceAtom)).
+  // Public-facing read atom. It prefers the cached snapshot when available,
+  // but falls back to a direct read for SSR/first render. When the Y source
+  // instance changes (with resubscribe enabled), a fresh read is returned
+  // immediately until the subscription updates the snapshot.
   const stateAtom = atom<T>((get) => {
     const y = get(ySourceAtom);
     const s = get(snapAtom);
@@ -117,66 +131,77 @@ export function createYAtom<YType extends Y.AbstractType<any>, T>(
     return read(y);
   });
 
-  // Subscription manager: installs Y observers and syncs snapshot when events fire.
-  // Uses AbortSignal to cleanup and re-run when ySourceAtom changes.
+  // Subscription manager: installs Y observers and syncs snapshot when events
+  // fire. Uses AbortSignal to cleanup and re-run when ySourceAtom changes.
+  // Two internal actions are used:
+  // - 'init': run on mount to optionally fix the initial Y reference and seed
+  //           the first snapshot when using a dynamic yAtom source.
+  // - 'sync': run whenever Y emits an event to refresh the cached snapshot.
   type SubAction = { type: 'sync' } | { type: 'init' };
 
   // For disabling resubscribe, capture the initial Y per-store and reuse it.
   const yRefAtom = atom<YType | null>(null);
-  const subAtom = atom<null, [SubAction?], void>(
-    (get, { signal, setSelf }) => {
-      // Determine which Y to subscribe to
-      let y: YType;
-      if (resubscribeOnSourceChange) {
-        y = get(ySourceAtom);
-      } else {
-        const yRef = get(yRefAtom);
-        y = yRef ?? get(ySourceAtom);
-      }
+  
+  // Helper that returns the currently active Y instance based on the
+  // resubscribe strategy.
+  const getActiveY = (get: <V>(a: Atom<V>) => V): YType =>
+    resubscribeOnSourceChange
+      ? get(ySourceAtom)
+      : (get(yRefAtom) ?? get(ySourceAtom));
 
-      let lastTxn: Y.Transaction | null = null;
+  // Effect atom that owns the Y subscription and performs snapshot updates.
+  const subscriptionAtom = atom<null, [SubAction?], void>(
+    (get, { signal, setSelf }) => {
+      // Determine which Y to subscribe to for this mount cycle.
+      const y = getActiveY(get);
+
       const unsubscribe = subscribeY(
         y,
-        (evt, tr) => {
-          if (!Array.isArray(evt) && eventFilter && !eventFilter(evt as any)) return;
-          if (tr && lastTxn && tr === lastTxn) return;
-          lastTxn = tr ?? null;
+        (evt, _tr) => {
+          if (!Array.isArray(evt) && eventFilter && !eventFilter(evt)) return;
           setSelf({ type: 'sync' });
-          // reset the guard after the current macrotask
-          setTimeout(() => {
-            lastTxn = null;
-          }, 0);
         },
         { deep }
       );
 
-      signal.addEventListener('abort', unsubscribe);
+      const cleanup = () => {
+        try {
+          unsubscribe();
+        } catch (err) {
+          if (process.env.NODE_ENV !== 'production') {
+            console.error('[y-jotai] Error during unsubscribe:', err);
+          }
+        }
+      };
+
+      signal.addEventListener('abort', cleanup);
       return null;
     },
     (get, set, action) => {
+      // 'sync' is the default action when events arrive or when setSelf() is
+      // called without an explicit action (Jotai’s convention).
       if (!action || action.type === 'sync') {
-        const y = resubscribeOnSourceChange
-          ? get(ySourceAtom)
-          : (get(yRefAtom) ?? get(ySourceAtom));
+        const y = getActiveY(get);
         const next = read(y);
         const prev = get(snapAtom);
         if (prev === UNSET || !equals(prev as T, next)) {
           set(snapAtom, next);
-          set(lastYAtom, y);
-        } else {
-          // still stamp lastY to align with current source
-          set(lastYAtom, y);
         }
-      } else if (action.type === 'init') {
+        // Always stamp lastY to reflect the active source we read from.
+        set(lastYAtom, y);
+        return;
+      }
+
+      // 'init' runs once on mount. When resubscribe is disabled, we capture
+      // the first Y instance and reuse it for the lifetime of the store. When
+      // the source is an atom (hasYAtom), we also seed the initial snapshot so
+      // the first read is consistent before any events fire.
+      if (action.type === 'init') {
         if (!resubscribeOnSourceChange) {
-          const y = get(ySourceAtom);
-          set(yRefAtom, y);
+          set(yRefAtom, get(ySourceAtom));
         }
-        // initialize snapshot for consistent first read only when using yAtom source
         if (hasYAtom) {
-          const y = resubscribeOnSourceChange
-            ? get(ySourceAtom)
-            : (get(yRefAtom) ?? get(ySourceAtom));
+          const y = getActiveY(get);
           const next = read(y);
           const prev = get(snapAtom);
           if (prev === UNSET || !equals(prev as T, next)) set(snapAtom, next);
@@ -189,7 +214,8 @@ export function createYAtom<YType extends Y.AbstractType<any>, T>(
   // Public atom: read state, ensure subAtom is mounted; writes transact against current Y.
   const out = atom<T, [T | ((prev: T) => T)], void>(
     (get) => {
-      get(subAtom);
+      // Ensure the subscription is mounted and kept in sync.
+      get(subscriptionAtom);
       return get(stateAtom);
     },
     (get, _set, update) => {
@@ -206,7 +232,7 @@ export function createYAtom<YType extends Y.AbstractType<any>, T>(
   );
 
   // Initialize per-store refs and populate first snapshot on mount.
-  subAtom.onMount = (set) => set({ type: 'init' });
+  subscriptionAtom.onMount = (set) => set({ type: 'init' });
 
   return out;
 }
@@ -232,6 +258,12 @@ export function createYMapKeyAtom<
   [TSnapshot | ((prev: TSnapshot) => TSnapshot)],
   void
 > {
+  if (process.env.NODE_ENV !== 'production') {
+    if (typeof key !== 'string' || key === '') {
+      throw new Error('[y-jotai] Map key must be a non-empty string');
+    }
+  }
+
   const decode: (value: TValue | undefined) => TSnapshot =
     opts?.decode ?? ((value) => value as TSnapshot);
   const encode: (value: TSnapshot) => TValue =
@@ -270,6 +302,12 @@ export function createYArrayIndexAtom<
   [TSnapshot | ((prev: TSnapshot) => TSnapshot)],
   void
 > {
+  if (process.env.NODE_ENV !== 'production') {
+    if (!Number.isInteger(index) || index < 0) {
+      throw new Error('[y-jotai] Array index must be a non-negative integer');
+    }
+  }
+
   const decode: (value: TItem | undefined) => TSnapshot =
     opts?.decode ?? ((value) => value as TSnapshot);
   const encode: (value: TSnapshot) => TItem =
@@ -298,12 +336,16 @@ export function createYArrayIndexAtom<
         }
         if ('insert' in change) {
           const ins = change.insert;
+          // Insert affects index if it happens at or before the index
           if (pos <= index) return true;
           pos += ins.length;
           continue;
         }
         if ('delete' in change) {
-          if (pos <= index) return true;
+          const del = change.delete;
+          // Delete affects index if the deleted range overlaps with or comes before the index
+          if (pos <= index && pos + del > index) return true;
+          if (pos <= index) return true; // Deletion before index shifts it
           continue;
         }
         return true;
@@ -324,11 +366,23 @@ export function createYTextAtom(
     y: txt,
     read: (t) => t.toString(),
     write: (t, next) => {
-      // Naive replace: delete all, insert new content.
-      // This is simple and correct; can be replaced by a diff algorithm if needed.
-      const len = t.length;
-      if (len > 0) t.delete(0, len);
-      if (next.length > 0) t.insert(0, next);
+      const current = t.toString();
+      if (current === next) return;
+
+      const patches = diff(current, next);
+      let offset = 0;
+
+      for (const [op, text] of patches) {
+        if (op === diff.DELETE) {
+          t.delete(offset, text.length);
+        } else if (op === diff.INSERT) {
+          t.insert(offset, text);
+          offset += text.length;
+        } else {
+          // diff.EQUAL
+          offset += text.length;
+        }
+      }
     },
     equals: (a, b) => a === b,
   });
@@ -352,6 +406,12 @@ export function createYPathAtom<TSnapshot>(
   [TSnapshot | ((prev: TSnapshot) => TSnapshot)],
   void
 > {
+  if (process.env.NODE_ENV !== 'production') {
+    if (!Array.isArray(path) || path.length === 0) {
+      throw new Error('[y-jotai] Path must be a non-empty array');
+    }
+  }
+
   const equals: Equals<TSnapshot> =
     opts?.equals ?? ((a, b) => defaultEquals(a, b));
 
@@ -410,7 +470,7 @@ export function createYPathAtom<TSnapshot>(
           return;
         }
         const current = parent.get(key);
-        if (isEqual(current, next)) return;
+        if (deepEquals(current, next)) return;
         parent.set(key, next);
         return;
       }
@@ -432,7 +492,7 @@ export function createYPathAtom<TSnapshot>(
       }
       if (hasSlot) {
         const current = parent.get(idx);
-        if (isEqual(current, next)) return;
+        if (deepEquals(current, next)) return;
         parent.delete(idx, 1);
         parent.insert(idx, [next]);
         return;
@@ -449,3 +509,6 @@ export function createYPathAtom<TSnapshot>(
     deep: opts?.deep ?? true, // path atom typically needs deep observation
   });
 }
+
+// Export utility functions for custom equality comparisons
+export { shallowEqual, deepEquals } from './utils';
