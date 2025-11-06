@@ -54,6 +54,9 @@ export const App = () => (
 
 ## Using a yAtom Source (atomFamily-friendly)
 
+> [!WARNING]
+> Prior to using this pattern, ensure you understand the semantics of `resubscribeOnSourceChange` and that your state management design is sound.
+
 When your Y instance itself comes from a Jotai atom (e.g., `atomFamily(id)` returning a `Y.Map`), pass it via `yAtom`.
 
 ```ts
