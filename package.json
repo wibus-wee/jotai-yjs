@@ -37,7 +37,7 @@
     "bench:watch": "vitest bench --watch"
   },
   "devDependencies": {
-    "@types/node": "^24.10.0",
+    "@types/node": "^24.10.1",
     "bumpp": "^10.3.1",
     "eslint-config-hyoban": "^4.0.10",
     "jotai": "^2.15.1",
