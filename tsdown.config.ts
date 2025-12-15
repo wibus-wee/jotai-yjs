@@ -1,5 +1,6 @@
 import { defineConfig } from 'tsdown'
 
 export default defineConfig({
-  // ...config options
+  entry: './src/index.ts',
+  fixedExtension: false
 })
