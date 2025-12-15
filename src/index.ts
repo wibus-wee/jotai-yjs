@@ -7,8 +7,8 @@ import { shallowEqual, deepEquals } from './utils'
 type Equals<T> = (a: T, b: T) => boolean;
 const defaultEquals = <T>(a: T, b: T): boolean => shallowEqual(a, b);
 const UNSET: unique symbol = Symbol('jotai-yjs/UNSET');
-const ATOM_WRITE_ORIGIN: unique symbol = Symbol('jotai-yjs/atom-write');
-const PATH_WRITE_ORIGIN: unique symbol = Symbol('jotai-yjs/path-write');
+export const ATOM_WRITE_ORIGIN: unique symbol = Symbol('jotai-yjs/atom-write');
+export const PATH_WRITE_ORIGIN: unique symbol = Symbol('jotai-yjs/path-write');
 
 type YArrayDelta<T> = Array<
   { retain: number } | { insert: T[] } | { delete: number }
@@ -298,6 +298,96 @@ export function createYMapKeyAtom<
   });
 }
 
+/** Options for createYMapEntryAtom. */
+export interface CreateYMapEntryAtomOptions<TEntry extends Y.AbstractType<any>> {
+  /**
+   * Optional type guard to validate the stored value matches TEntry.
+   * If provided and the value fails the guard, null is returned.
+   */
+  typeGuard?: (value: unknown) => value is TEntry;
+  /** Optional equality function. Defaults to reference equality. */
+  equals?: Equals<TEntry | null>;
+  /**
+   * If true, writing `null` will delete the key from the map instead of
+   * storing a literal `null` value. This aligns with CRDT semantics where
+   * deletion is preferable to tombstones. Default: false.
+   */
+  deleteOnNull?: boolean;
+}
+
+/**
+ * Y.Map entry atom for Y types (Map/Array/Text etc). Tracks replacement of the
+ * entry at `key` and returns the referenced Y type (or null when missing).
+ * Defaults to reference equality.
+ *
+ * @example
+ * ```ts
+ * const doc = new Y.Doc()
+ * const blocks = doc.getMap<Y.Map<any>>('blocks')
+ * // Subscribe to a nested Y.Map by key; updates when the reference is replaced.
+ * const blockAtom = createYMapEntryAtom(blocks, 'activeBlock', { deleteOnNull: true })
+ * // Writing null will delete the key
+ * set(blockAtom, null)
+ * ```
+ */
+export function createYMapEntryAtom<TEntry extends Y.AbstractType<any>>(
+  map: Y.Map<TEntry | null>,
+  key: string,
+  opts?: CreateYMapEntryAtomOptions<TEntry>
+): WritableAtom<
+  TEntry | null,
+  [TEntry | null | ((prev: TEntry | null) => TEntry | null)],
+  void
+>;
+export function createYMapEntryAtom<TEntry extends Y.AbstractType<any>>(
+  map: Y.Map<unknown>,
+  key: string,
+  opts?: CreateYMapEntryAtomOptions<TEntry>
+): WritableAtom<
+  TEntry | null,
+  [TEntry | null | ((prev: TEntry | null) => TEntry | null)],
+  void
+>;
+export function createYMapEntryAtom<TEntry extends Y.AbstractType<any>>(
+  map: Y.Map<unknown>,
+  key: string,
+  opts?: CreateYMapEntryAtomOptions<TEntry>
+): WritableAtom<
+  TEntry | null,
+  [TEntry | null | ((prev: TEntry | null) => TEntry | null)],
+  void
+> {
+  if (process.env.NODE_ENV !== 'production') {
+    if (typeof key !== 'string' || key === '') {
+      throw new Error('[y-jotai] Map key must be a non-empty string');
+    }
+  }
+
+  const typeGuard = opts?.typeGuard;
+  const equals: Equals<TEntry | null> = opts?.equals ?? ((a, b) => a === b);
+  const deleteOnNull = opts?.deleteOnNull ?? false;
+
+  const readEntry = (m: Y.Map<unknown>): TEntry | null => {
+    const value = m.get(key);
+    if (typeGuard) return typeGuard(value) ? value : null;
+    return value instanceof Y.AbstractType ? (value as TEntry) : null;
+  };
+
+  return createYAtom({
+    y: map,
+    read: (m) => readEntry(m),
+    write: (m, next) => {
+      if (next === null && deleteOnNull) {
+        m.delete(key);
+      } else {
+        m.set(key, next);
+      }
+    },
+    equals,
+    eventFilter: (evt) => (evt.keysChanged ? evt.keysChanged.has(key) : true),
+  });
+}
+
 /**
  * Y.Array index atom: exposes a single index snapshot with decode/encode.
  * The eventFilter attempts to be precise using delta, but `equals` still guards safety.
@@ -365,6 +455,173 @@ export function createYArrayIndexAtom<
           continue;
         }
         return true;
+      }
+      return false;
+    },
+  });
+}
+
+/** Options for createYMapFieldsAtom. */
+export interface CreateYMapFieldsAtomOptions<T> {
+  /**
+   * If true, missing keys in the read snapshot will be explicitly set to
+   * undefined. Otherwise, only present keys are included. Default: false.
+   */
+  includeUndefined?: boolean;
+  /** Optional equality function. Defaults to shallow equality. */
+  equals?: Equals<T>;
+  /**
+   * If true, writing `undefined` to a field will delete that key from the map.
+   * This enables explicit deletion through the atom API. Default: false.
+   */
+  deleteOnUndefined?: boolean;
+  /**
+   * Optional equality function to compare individual field values.
+   * Used to determine whether a write is necessary.
+   * Defaults to Object.is (reference/primitive equality).
+   */
+  fieldEquals?: (a: unknown, b: unknown) => boolean;
+}
+
+/**
+ * Y.Map fields atom: projects selected keys into a partial object with narrow
+ * subscriptions. Defaults to shallow equality and omits undefined keys unless
+ * includeUndefined is true.
+ *
+ * Key improvements over naive implementations:
+ * - Only writes fields that actually changed (avoids redundant CRDT operations)
+ * - Supports deleteOnUndefined to enable explicit key deletion
+ * - Narrow event filtering for better performance
+ *
+ * @example
+ * ```ts
+ * const doc = new Y.Doc()
+ * const metadata = doc.getMap<string | number>('metadata')
+ *
+ * type Meta = { title?: string; count?: number }
+ * const metaAtom = createYMapFieldsAtom<Meta>(metadata, ['title', 'count'], {
+ *   includeUndefined: true,
+ *   deleteOnUndefined: true,
+ * })
+ *
+ * // Only 'title' will be written to the CRDT (count unchanged)
+ * set(metaAtom, prev => ({ ...prev, title: 'New Title' }))
+ *
+ * // Delete 'title' key from the map
+ * set(metaAtom, prev => ({ ...prev, title: undefined }))
+ * ```
+ */
+export function createYMapFieldsAtom<
+  TRecord extends Record<string, any>,
+  const Keys extends readonly (keyof TRecord & string)[]
+>(
+  map: Y.Map<TRecord[keyof TRecord]>,
+  keys: Keys,
+  opts?: CreateYMapFieldsAtomOptions<Partial<Pick<TRecord, Keys[number]>>>
+): WritableAtom<
+  Partial<Pick<TRecord, Keys[number]>>,
+  [
+    | Partial<Pick<TRecord, Keys[number]>>
+    | ((
+        prev: Partial<Pick<TRecord, Keys[number]>>
+      ) => Partial<Pick<TRecord, Keys[number]>>)
+  ],
+  void
+>;
+export function createYMapFieldsAtom<const Keys extends readonly string[]>(
+  map: Y.Map<unknown>,
+  keys: Keys,
+  opts?: CreateYMapFieldsAtomOptions<Partial<Record<Keys[number], unknown>>>
+): WritableAtom<
+  Partial<Record<Keys[number], unknown>>,
+  [
+    | Partial<Record<Keys[number], unknown>>
+    | ((
+        prev: Partial<Record<Keys[number], unknown>>
+      ) => Partial<Record<Keys[number], unknown>>)
+  ],
+  void
+>;
+export function createYMapFieldsAtom(
+  map: Y.Map<unknown>,
+  keys: readonly string[],
+  opts?: CreateYMapFieldsAtomOptions<Partial<Record<string, unknown>>>
+): WritableAtom<
+  Partial<Record<string, unknown>>,
+  [
+    | Partial<Record<string, unknown>>
+    | ((
+        prev: Partial<Record<string, unknown>>
+      ) => Partial<Record<string, unknown>>)
+  ],
+  void
+> {
+  if (process.env.NODE_ENV !== 'production') {
+    if (!Array.isArray(keys) || keys.length === 0) {
+      throw new Error('[y-jotai] Map fields must be a non-empty array of keys');
+    }
+  }
+
+  const includeUndefined = opts?.includeUndefined ?? false;
+  const deleteOnUndefined = opts?.deleteOnUndefined ?? false;
+  const fieldEquals = opts?.fieldEquals ?? Object.is;
+  const equals = (opts?.equals ?? defaultEquals) as Equals<
+    Partial<Record<string, unknown>>
+  >;
+  const keySet = new Set(keys);
+
+  const readFields = (m: Y.Map<unknown>): Partial<Record<string, unknown>> => {
+    const result: Partial<Record<string, unknown>> = {};
+    const existingKeys = new Set<string>(m.keys());
+    for (const key of keys) {
+      const value = m.get(key);
+      if (includeUndefined) {
+        result[key] = existingKeys.has(key) ? value : undefined;
+        continue;
+      }
+      if (value !== undefined || existingKeys.has(key)) {
+        result[key] = value;
+      }
+    }
+    return result;
+  };
+
+  return createYAtom({
+    y: map,
+    read: (m) => readFields(m),
+    write: (m, next) => {
+      // Only write fields that actually changed to minimize CRDT operations
+      for (const key of keys) {
+        if (!Object.prototype.hasOwnProperty.call(next, key)) continue;
+        const nextValue = (next as Record<string, unknown>)[key];
+        const hasKey = m.has(key);
+
+        // Handle undefined with deleteOnUndefined option
+        if (nextValue === undefined) {
+          if (deleteOnUndefined && hasKey) {
+            m.delete(key);
+          }
+          // When deleteOnUndefined is false, ignore undefined (no implicit delete)
+          continue;
+        }
+
+        if (!hasKey) {
+          m.set(key, nextValue);
+          continue;
+        }
+
+        const currentValue = m.get(key);
+        // Use fieldEquals for comparison (handles both primitives and references)
+        if (!fieldEquals(currentValue, nextValue)) {
+          m.set(key, nextValue);
+        }
+      }
+    },
+    equals,
+    eventFilter: (evt) => {
+      if (!evt.keysChanged) return true;
+      for (const key of keySet) {
+        if (evt.keysChanged.has(key as any)) return true;
       }
       return false;
     },

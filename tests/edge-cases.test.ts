@@ -1,7 +1,9 @@
 import { describe, it, expect, vi } from 'vitest'
 import * as Y from 'yjs'
-import { atom, createStore } from 'jotai'
+import { createStore } from 'jotai'
 import {
+  ATOM_WRITE_ORIGIN,
+  PATH_WRITE_ORIGIN,
   createYAtom,
   createYMapKeyAtom,
   createYArrayIndexAtom,
@@ -285,7 +287,7 @@ describe('Edge cases', () => {
       })
 
       store.set(defaultAtom, 1)
-      expect(origins.at(-1)).toBe('[y-jotai] atom-write')
+      expect(origins.at(-1)).toBe(ATOM_WRITE_ORIGIN)
 
       const staticOriginAtom = createYAtom({
         y: map,
@@ -301,7 +303,7 @@ describe('Edge cases', () => {
         y: map,
         read: (m) => m.get('c') ?? 0,
         write: (m, next) => m.set('c', next),
-        transactionOrigin: ({ type }) => `fn-origin-${type}`,
+        transactionOrigin: ({ type }: { type: string }) => `fn-origin-${type}`,
       })
 
       store.set(fnOriginAtom, 3)
@@ -320,7 +322,7 @@ describe('Edge cases', () => {
 
       const defaultPathAtom = createYPathAtom<number | undefined>(root, ['foo'])
       store.set(defaultPathAtom, 1)
-      expect(origins.at(-1)).toBe('[y-jotai] path-write')
+      expect(origins.at(-1)).toBe(PATH_WRITE_ORIGIN)
 
       const customPathAtom = createYPathAtom<number | undefined>(root, ['bar'], {
         read: (node) => (node as number | undefined) ?? 0,

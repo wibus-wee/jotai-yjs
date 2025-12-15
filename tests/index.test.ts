@@ -4,6 +4,8 @@ import { atom, createStore } from 'jotai'
 import {
   createYAtom,
   createYMapKeyAtom,
+  createYMapEntryAtom,
+  createYMapFieldsAtom,
   createYArrayIndexAtom,
   createYTextAtom,
   createYPathAtom,
@@ -41,6 +43,40 @@ describe('yJotai adapters', () => {
     // Setting same value should be suppressed by equals
     map.set('a', 5)
     expect(seen.length).toBe(2)
+
+    unsubscribe()
+  })
+
+  it('Map entry atom tracks Y type reference and filters by key', () => {
+    const doc = new Y.Doc()
+    const map = doc.getMap<unknown>('m')
+    const entryAtom = createYMapEntryAtom<Y.Map<any>>(map, 'child')
+
+    const store = createStore()
+    const seen: Array<Y.Map<any> | null> = []
+
+    const unsubscribe = store.sub(entryAtom, () => {
+      seen.push(store.get(entryAtom))
+    })
+    seen.push(store.get(entryAtom))
+    expect(seen.at(-1)).toBeNull()
+
+    const first = new Y.Map<any>()
+    first.set('v', 1)
+    map.set('child', first)
+    expect(store.get(entryAtom)).toBe(first)
+    expect(seen.at(-1)).toBe(first)
+
+    // Replacing with a new reference should update
+    const second = new Y.Map<any>()
+    map.set('child', second)
+    expect(store.get(entryAtom)).toBe(second)
+    expect(seen.at(-1)).toBe(second)
+
+    // Unrelated key should be filtered out
+    const before = seen.length
+    map.set('other', new Y.Map<any>())
+    expect(seen.length).toBe(before)
 
     unsubscribe()
   })
@@ -121,6 +157,235 @@ describe('yJotai adapters', () => {
     expect(seen.length).toBe(before)
 
     unsubscribe()
+  })
+
+  it('Map fields atom narrows updates to selected keys with shallow equals', () => {
+    const doc = new Y.Doc()
+    const map = doc.getMap<any>('m')
+    const fieldsAtom = createYMapFieldsAtom(map, ['title', 'status'] as const)
+
+    const store = createStore()
+    const seen: Array<Partial<{ title?: string; status?: string }>> = []
+
+    const unsubscribe = store.sub(fieldsAtom, () => {
+      seen.push(store.get(fieldsAtom))
+    })
+    seen.push(store.get(fieldsAtom))
+    expect(seen.at(-1)).toEqual({})
+
+    map.set('other', 'noop')
+    expect(seen.length).toBe(1)
+
+    map.set('title', 'hello')
+    expect(store.get(fieldsAtom)).toEqual({ title: 'hello' })
+    expect(seen.at(-1)).toEqual({ title: 'hello' })
+
+    // Same value is shallow-equal; no extra push
+    const before = seen.length
+    map.set('title', 'hello')
+    expect(seen.length).toBe(before)
+
+    map.set('status', 'open')
+    expect(store.get(fieldsAtom)).toEqual({ title: 'hello', status: 'open' })
+    expect(seen.at(-1)).toEqual({ title: 'hello', status: 'open' })
+
+    unsubscribe()
+  })
+
+  it('Map fields atom supports includeUndefined and partial writes', () => {
+    const doc = new Y.Doc()
+    const map = doc.getMap<any>('m')
+    const fieldsAtom = createYMapFieldsAtom(
+      map,
+      ['title', 'count'] as const,
+      { includeUndefined: true }
+    )
+
+    const store = createStore()
+    const seen: Array<Partial<{ title?: string; count?: number }>> = []
+
+    const unsubscribe = store.sub(fieldsAtom, () => {
+      seen.push(store.get(fieldsAtom))
+    })
+    seen.push(store.get(fieldsAtom))
+    expect(seen.at(-1)).toEqual({ title: undefined, count: undefined })
+
+    store.set(fieldsAtom, { title: 'hi' })
+    expect(map.get('title')).toBe('hi')
+    expect(map.has('count')).toBe(false)
+    expect(store.get(fieldsAtom)).toEqual({ title: 'hi', count: undefined })
+    expect(seen.at(-1)).toEqual({ title: 'hi', count: undefined })
+
+    store.set(fieldsAtom, (prev) => ({ ...prev, count: 2 }))
+    expect(map.get('count')).toBe(2)
+    expect(store.get(fieldsAtom)).toEqual({ title: 'hi', count: 2 })
+    expect(seen.at(-1)).toEqual({ title: 'hi', count: 2 })
+
+    const before = seen.length
+    map.set('other', 'noop')
+    expect(seen.length).toBe(before)
+
+    unsubscribe()
+  })
+
+  it('Map entry atom deleteOnNull removes key from map', () => {
+    const doc = new Y.Doc()
+    const map = doc.getMap<Y.Map<any> | null>('m')
+    const entryAtom = createYMapEntryAtom<Y.Map<any>>(map, 'child', {
+      deleteOnNull: true,
+    })
+
+    const store = createStore()
+    const seen: Array<Y.Map<any> | null> = []
+
+    const unsubscribe = store.sub(entryAtom, () => {
+      seen.push(store.get(entryAtom))
+    })
+    seen.push(store.get(entryAtom))
+    expect(seen.at(-1)).toBeNull()
+
+    // Set a Y.Map entry
+    const child = new Y.Map<any>()
+    child.set('v', 1)
+    store.set(entryAtom, child)
+    expect(map.get('child')).toBe(child)
+    expect(store.get(entryAtom)).toBe(child)
+
+    // Writing null should delete the key (not leave tombstone)
+    store.set(entryAtom, null)
+    expect(map.has('child')).toBe(false)
+    expect(store.get(entryAtom)).toBeNull()
+
+    unsubscribe()
+  })
+
+  it('Map entry atom without deleteOnNull stores null value', () => {
+    const doc = new Y.Doc()
+    const map = doc.getMap<Y.Map<any> | null>('m')
+    const entryAtom = createYMapEntryAtom<Y.Map<any>>(map, 'child')
+
+    const store = createStore()
+    const unsub = store.sub(entryAtom, () => {})
+
+    // Set a Y.Map entry
+    const child = new Y.Map<any>()
+    store.set(entryAtom, child)
+    expect(map.get('child')).toBe(child)
+
+    // Writing null should store null value (key remains)
+    store.set(entryAtom, null)
+    expect(map.has('child')).toBe(true)
+    expect(map.get('child')).toBeNull()
+
+    unsub()
+  })
+
+  it('Map fields atom deleteOnUndefined removes keys from map', () => {
+    const doc = new Y.Doc()
+    const map = doc.getMap<any>('m')
+    map.set('title', 'hello')
+    map.set('count', 5)
+
+    const fieldsAtom = createYMapFieldsAtom(
+      map,
+      ['title', 'count'] as const,
+      { deleteOnUndefined: true }
+    )
+
+    const store = createStore()
+    const unsub = store.sub(fieldsAtom, () => {})
+
+    expect(store.get(fieldsAtom)).toEqual({ title: 'hello', count: 5 })
+
+    // Writing undefined to 'title' should delete it
+    store.set(fieldsAtom, { title: undefined, count: 5 })
+    expect(map.has('title')).toBe(false)
+    expect(map.get('count')).toBe(5)
+    expect(store.get(fieldsAtom)).toEqual({ count: 5 })
+
+    unsub()
+  })
+
+  it('Map fields atom only writes changed fields (no redundant CRDT ops)', () => {
+    const doc = new Y.Doc()
+    const map = doc.getMap<any>('m')
+    map.set('title', 'hello')
+    map.set('count', 5)
+
+    // Track all set operations on the map
+    const setCalls: Array<{ key: string; value: unknown }> = []
+    const originalSet = map.set.bind(map) as typeof map.set
+    ;(map as any).set = <VAL>(key: string, value: VAL): VAL => {
+      setCalls.push({ key, value })
+      return originalSet(key, value)
+    }
+
+    const fieldsAtom = createYMapFieldsAtom(
+      map,
+      ['title', 'count'] as const
+    )
+
+    const store = createStore()
+    const unsub = store.sub(fieldsAtom, () => {})
+
+    // Clear setCalls from any initial operations
+    setCalls.length = 0
+
+    // Write with unchanged count - should only set 'title'
+    store.set(fieldsAtom, { title: 'world', count: 5 })
+    expect(setCalls).toEqual([{ key: 'title', value: 'world' }])
+    expect(map.get('title')).toBe('world')
+    expect(map.get('count')).toBe(5)
+
+    setCalls.length = 0
+
+    // Write with both unchanged - should not call set at all
+    store.set(fieldsAtom, { title: 'world', count: 5 })
+    expect(setCalls).toEqual([])
+
+    setCalls.length = 0
+
+    // Write with only count changed - should only set 'count'
+    store.set(fieldsAtom, prev => ({ ...prev, count: 10 }))
+    expect(setCalls).toEqual([{ key: 'count', value: 10 }])
+
+    unsub()
+  })
+
+  it('Map fields atom fieldEquals option for custom comparison', () => {
+    const doc = new Y.Doc()
+    const map = doc.getMap<any>('m')
+    map.set('data', { nested: 1 })
+
+    // Track set operations
+    const setCalls: string[] = []
+    const originalSet = map.set.bind(map) as typeof map.set
+    ;(map as any).set = <VAL>(key: string, value: VAL): VAL => {
+      setCalls.push(key)
+      return originalSet(key, value)
+    }
+
+    // With deep equality for fields
+    const fieldsAtom = createYMapFieldsAtom(
+      map,
+      ['data'] as const,
+      { fieldEquals: (a, b) => JSON.stringify(a) === JSON.stringify(b) }
+    )
+
+    const store = createStore()
+    const unsub = store.sub(fieldsAtom, () => {})
+
+    setCalls.length = 0
+
+    // Same content, different reference - should not trigger set
+    store.set(fieldsAtom, { data: { nested: 1 } })
+    expect(setCalls).toEqual([])
+
+    // Different content - should trigger set
+    store.set(fieldsAtom, { data: { nested: 2 } })
+    expect(setCalls).toEqual(['data'])
+
+    unsub()
   })
 
   

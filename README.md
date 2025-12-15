@@ -106,8 +106,13 @@ Notes
 - Start coarse and refine: begin with a single `createYAtom` per document; split into smaller atoms only when profiling indicates a need.
 - Opt for factories when focusing:
   - `createYMapKeyAtom(map, key)` for single key
+  - `createYMapEntryAtom(map, key, { deleteOnNull })` for Y type reference stored at a key (narrow to replacements); set `deleteOnNull: true` to delete key when writing `null`
+  - `createYMapFieldsAtom(map, ['title', 'status'], { deleteOnUndefined })` for partial projections of a Map; only writes changed fields; set `deleteOnUndefined: true` to delete keys when writing `undefined`
   - `createYArrayIndexAtom(array, index)` for single item
   - `createYTextAtom(text)` for text content
+
+  > [!IMPORTANT]
+  > deleteOnNull and deleteOnUndefined are mutually exclusive. Enable only the option that matches the sentinel value you want to treat as a deletion marker (`null` vs `undefined`) to avoid conflicting behaviors.
 - Arbitrary paths: `createYPathAtom(root, ['a', 0, 'b'])` traverses Map/Array mixes.
   - Default writer semantics:
     - Map: `undefined` is ignored; use a custom writer or dedicated delete atom when you need to remove keys.
@@ -213,6 +218,51 @@ export const darkModeAtom = createYMapKeyAtom<unknown, boolean>(settings, 'darkM
   decode: (v) => Boolean(v ?? false),
   encode: (v) => Boolean(v),
 })
+```
+
+### Map entry atom (Y types stored inside a Map)
+
+```ts
+import * as Y from 'yjs'
+import { createYMapEntryAtom } from 'y-jotai'
+
+const doc = new Y.Doc()
+const blocks = doc.getMap<Y.Map<any> | null>('blocks')
+
+// Subscribe to a nested Y.Map by key; updates when the reference is replaced.
+// With deleteOnNull: true, writing null removes the key entirely (no tombstone).
+export const blockMapAtom = createYMapEntryAtom<Y.Map<any>>(blocks, 'activeBlock', {
+  deleteOnNull: true, // writing null will delete the key instead of storing null
+})
+```
+
+### Map fields atom (partial projection of a Map)
+
+```ts
+import * as Y from 'yjs'
+import { createYMapFieldsAtom } from 'y-jotai'
+
+const doc = new Y.Doc()
+const metadata = doc.getMap<string | number>('metadata')
+
+type Meta = { title?: string; count?: number }
+
+// Keys infer from the const tuple; only writes fields that actually changed.
+// With deleteOnUndefined: true, writing undefined removes that key.
+export const metaFieldsAtom = createYMapFieldsAtom<Meta>(
+  metadata,
+  ['title', 'count'] as const,
+  {
+    includeUndefined: true,   // include missing fields as undefined in read
+    deleteOnUndefined: true,  // writing undefined deletes the key
+  }
+)
+
+// Only 'title' will be written to CRDT (count unchanged, no redundant ops)
+// set(metaFieldsAtom, prev => ({ ...prev, title: 'New Title' }))
+
+// Delete 'title' key from the map
+// set(metaFieldsAtom, prev => ({ ...prev, title: undefined }))
 ```
 
 ### Array index atom (replace item in place)
