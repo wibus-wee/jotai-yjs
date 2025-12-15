@@ -315,7 +315,7 @@ describe('yJotai adapters', () => {
     // Track all set operations on the map
     const setCalls: Array<{ key: string; value: unknown }> = []
     const originalSet = map.set.bind(map) as typeof map.set
-    ;(map as any).set = <VAL>(key: string, value: VAL): VAL => {
+    ;(map as any).set = <V>(key: string, value: V): V => {
       setCalls.push({ key, value })
       return originalSet(key, value)
     }

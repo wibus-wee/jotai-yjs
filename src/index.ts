@@ -789,14 +789,14 @@ export function createYPathAtom<TSnapshot>(
     parent.insert(boundedIndex, [next]);
   };
 
-  const isPathTransactionOrigin = (
+  const isTransactionOriginFunction = (
     value: unknown
-  ): value is PathTransactionOrigin => typeof value === 'function';
+  ): value is (...args: any[]) => any => typeof value === 'function';
 
   const pathOrigin = opts?.transactionOrigin;
   const atomTransactionOrigin =
-    isPathTransactionOrigin(pathOrigin)
-      ? (_params: { y: Y.AbstractType<any>; type: 'write' }) =>
+    isTransactionOriginFunction(pathOrigin)
+      ? () =>
           pathOrigin({ root, path, type: 'write' })
       : pathOrigin ?? PATH_WRITE_ORIGIN;
 
