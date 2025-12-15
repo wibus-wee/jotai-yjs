@@ -1,6 +1,6 @@
 {
   "name": "y-jotai",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Thin, typed bridge between Yjs types and Jotai atoms.",
   "type": "module",
   "license": "MIT",
