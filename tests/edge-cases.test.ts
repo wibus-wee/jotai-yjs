@@ -1,7 +1,9 @@
 import { describe, it, expect, vi } from 'vitest'
 import * as Y from 'yjs'
-import { atom, createStore } from 'jotai'
+import { createStore } from 'jotai'
 import {
+  ATOM_WRITE_ORIGIN,
+  PATH_WRITE_ORIGIN,
   createYAtom,
   createYMapKeyAtom,
   createYArrayIndexAtom,
@@ -248,6 +250,87 @@ describe('Edge cases', () => {
       }).not.toThrow()
 
       warn.mockRestore()
+    })
+  })
+
+  describe('Transaction origin tagging', () => {
+    it('withTransact forwards origin to Y.Doc transactions', () => {
+      const doc = new Y.Doc()
+      const map = doc.getMap<number>('m')
+      const origins: unknown[] = []
+
+      doc.on('afterTransaction', (tr: any) => {
+        origins.push(tr.origin)
+      })
+
+      withTransact(doc, () => {
+        map.set('a', 1)
+      }, 'custom-origin')
+
+      expect(origins.at(-1)).toBe('custom-origin')
+    })
+
+    it('createYAtom tags writes with default and custom origin', () => {
+      const doc = new Y.Doc()
+      const map = doc.getMap<number>('m')
+      const store = createStore()
+      const origins: unknown[] = []
+
+      doc.on('afterTransaction', (tr: any) => {
+        origins.push(tr.origin)
+      })
+
+      const defaultAtom = createYAtom({
+        y: map,
+        read: (m) => m.get('a') ?? 0,
+        write: (m, next) => m.set('a', next),
+      })
+
+      store.set(defaultAtom, 1)
+      expect(origins.at(-1)).toBe(ATOM_WRITE_ORIGIN)
+
+      const staticOriginAtom = createYAtom({
+        y: map,
+        read: (m) => m.get('b') ?? 0,
+        write: (m, next) => m.set('b', next),
+        transactionOrigin: 'static-origin',
+      })
+
+      store.set(staticOriginAtom, 2)
+      expect(origins.at(-1)).toBe('static-origin')
+
+      const fnOriginAtom = createYAtom({
+        y: map,
+        read: (m) => m.get('c') ?? 0,
+        write: (m, next) => m.set('c', next),
+        transactionOrigin: ({ type }: { type: string }) => `fn-origin-${type}`,
+      })
+
+      store.set(fnOriginAtom, 3)
+      expect(origins.at(-1)).toBe('fn-origin-write')
+    })
+
+    it('createYPathAtom tags writes with default and custom origin', () => {
+      const doc = new Y.Doc()
+      const root = doc.getMap<unknown>('root')
+      const store = createStore()
+      const origins: unknown[] = []
+
+      doc.on('afterTransaction', (tr: any) => {
+        origins.push(tr.origin)
+      })
+
+      const defaultPathAtom = createYPathAtom<number | undefined>(root, ['foo'])
+      store.set(defaultPathAtom, 1)
+      expect(origins.at(-1)).toBe(PATH_WRITE_ORIGIN)
+
+      const customPathAtom = createYPathAtom<number | undefined>(root, ['bar'], {
+        read: (node) => (node as number | undefined) ?? 0,
+        transactionOrigin: 'path-origin',
+      })
+
+      store.set(customPathAtom, 2)
+      expect(origins.at(-1)).toBe('path-origin')
     })
   })
 

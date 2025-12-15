@@ -118,7 +118,7 @@ describe('Memory leaks', () => {
     })
 
     // Create atom but don't subscribe
-    const _atom = createYMapKeyAtom(map, 'key')
+    createYMapKeyAtom(map, 'key')
 
     map.set('key', 1)
 

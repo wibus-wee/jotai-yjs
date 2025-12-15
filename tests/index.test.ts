@@ -4,6 +4,8 @@ import { atom, createStore } from 'jotai'
 import {
   createYAtom,
   createYMapKeyAtom,
+  createYMapEntryAtom,
+  createYMapFieldsAtom,
   createYArrayIndexAtom,
   createYTextAtom,
   createYPathAtom,
@@ -41,6 +43,40 @@ describe('yJotai adapters', () => {
     // Setting same value should be suppressed by equals
     map.set('a', 5)
     expect(seen.length).toBe(2)
+
+    unsubscribe()
+  })
+
+  it('Map entry atom tracks Y type reference and filters by key', () => {
+    const doc = new Y.Doc()
+    const map = doc.getMap<unknown>('m')
+    const entryAtom = createYMapEntryAtom<Y.Map<any>>(map, 'child')
+
+    const store = createStore()
+    const seen: Array<Y.Map<any> | null> = []
+
+    const unsubscribe = store.sub(entryAtom, () => {
+      seen.push(store.get(entryAtom))
+    })
+    seen.push(store.get(entryAtom))
+    expect(seen.at(-1)).toBeNull()
+
+    const first = new Y.Map<any>()
+    first.set('v', 1)
+    map.set('child', first)
+    expect(store.get(entryAtom)).toBe(first)
+    expect(seen.at(-1)).toBe(first)
+
+    // Replacing with a new reference should update
+    const second = new Y.Map<any>()
+    map.set('child', second)
+    expect(store.get(entryAtom)).toBe(second)
+    expect(seen.at(-1)).toBe(second)
+
+    // Unrelated key should be filtered out
+    const before = seen.length
+    map.set('other', new Y.Map<any>())
+    expect(seen.length).toBe(before)
 
     unsubscribe()
   })
@@ -123,6 +159,235 @@ describe('yJotai adapters', () => {
     unsubscribe()
   })
 
+  it('Map fields atom narrows updates to selected keys with shallow equals', () => {
+    const doc = new Y.Doc()
+    const map = doc.getMap<any>('m')
+    const fieldsAtom = createYMapFieldsAtom(map, ['title', 'status'] as const)
+
+    const store = createStore()
+    const seen: Array<Partial<{ title?: string; status?: string }>> = []
+
+    const unsubscribe = store.sub(fieldsAtom, () => {
+      seen.push(store.get(fieldsAtom))
+    })
+    seen.push(store.get(fieldsAtom))
+    expect(seen.at(-1)).toEqual({})
+
+    map.set('other', 'noop')
+    expect(seen.length).toBe(1)
+
+    map.set('title', 'hello')
+    expect(store.get(fieldsAtom)).toEqual({ title: 'hello' })
+    expect(seen.at(-1)).toEqual({ title: 'hello' })
+
+    // Same value is shallow-equal; no extra push
+    const before = seen.length
+    map.set('title', 'hello')
+    expect(seen.length).toBe(before)
+
+    map.set('status', 'open')
+    expect(store.get(fieldsAtom)).toEqual({ title: 'hello', status: 'open' })
+    expect(seen.at(-1)).toEqual({ title: 'hello', status: 'open' })
+
+    unsubscribe()
+  })
+
+  it('Map fields atom supports includeUndefined and partial writes', () => {
+    const doc = new Y.Doc()
+    const map = doc.getMap<any>('m')
+    const fieldsAtom = createYMapFieldsAtom(
+      map,
+      ['title', 'count'] as const,
+      { includeUndefined: true }
+    )
+
+    const store = createStore()
+    const seen: Array<Partial<{ title?: string; count?: number }>> = []
+
+    const unsubscribe = store.sub(fieldsAtom, () => {
+      seen.push(store.get(fieldsAtom))
+    })
+    seen.push(store.get(fieldsAtom))
+    expect(seen.at(-1)).toEqual({ title: undefined, count: undefined })
+
+    store.set(fieldsAtom, { title: 'hi' })
+    expect(map.get('title')).toBe('hi')
+    expect(map.has('count')).toBe(false)
+    expect(store.get(fieldsAtom)).toEqual({ title: 'hi', count: undefined })
+    expect(seen.at(-1)).toEqual({ title: 'hi', count: undefined })
+
+    store.set(fieldsAtom, (prev) => ({ ...prev, count: 2 }))
+    expect(map.get('count')).toBe(2)
+    expect(store.get(fieldsAtom)).toEqual({ title: 'hi', count: 2 })
+    expect(seen.at(-1)).toEqual({ title: 'hi', count: 2 })
+
+    const before = seen.length
+    map.set('other', 'noop')
+    expect(seen.length).toBe(before)
+
+    unsubscribe()
+  })
+
+  it('Map entry atom deleteOnNull removes key from map', () => {
+    const doc = new Y.Doc()
+    const map = doc.getMap<Y.Map<any> | null>('m')
+    const entryAtom = createYMapEntryAtom<Y.Map<any>>(map, 'child', {
+      deleteOnNull: true,
+    })
+
+    const store = createStore()
+    const seen: Array<Y.Map<any> | null> = []
+
+    const unsubscribe = store.sub(entryAtom, () => {
+      seen.push(store.get(entryAtom))
+    })
+    seen.push(store.get(entryAtom))
+    expect(seen.at(-1)).toBeNull()
+
+    // Set a Y.Map entry
+    const child = new Y.Map<any>()
+    child.set('v', 1)
+    store.set(entryAtom, child)
+    expect(map.get('child')).toBe(child)
+    expect(store.get(entryAtom)).toBe(child)
+
+    // Writing null should delete the key (not leave tombstone)
+    store.set(entryAtom, null)
+    expect(map.has('child')).toBe(false)
+    expect(store.get(entryAtom)).toBeNull()
+
+    unsubscribe()
+  })
+
+  it('Map entry atom without deleteOnNull stores null value', () => {
+    const doc = new Y.Doc()
+    const map = doc.getMap<Y.Map<any> | null>('m')
+    const entryAtom = createYMapEntryAtom<Y.Map<any>>(map, 'child')
+
+    const store = createStore()
+    const unsub = store.sub(entryAtom, () => {})
+
+    // Set a Y.Map entry
+    const child = new Y.Map<any>()
+    store.set(entryAtom, child)
+    expect(map.get('child')).toBe(child)
+
+    // Writing null should store null value (key remains)
+    store.set(entryAtom, null)
+    expect(map.has('child')).toBe(true)
+    expect(map.get('child')).toBeNull()
+
+    unsub()
+  })
+
+  it('Map fields atom deleteOnUndefined removes keys from map', () => {
+    const doc = new Y.Doc()
+    const map = doc.getMap<any>('m')
+    map.set('title', 'hello')
+    map.set('count', 5)
+
+    const fieldsAtom = createYMapFieldsAtom(
+      map,
+      ['title', 'count'] as const,
+      { deleteOnUndefined: true }
+    )
+
+    const store = createStore()
+    const unsub = store.sub(fieldsAtom, () => {})
+
+    expect(store.get(fieldsAtom)).toEqual({ title: 'hello', count: 5 })
+
+    // Writing undefined to 'title' should delete it
+    store.set(fieldsAtom, { title: undefined, count: 5 })
+    expect(map.has('title')).toBe(false)
+    expect(map.get('count')).toBe(5)
+    expect(store.get(fieldsAtom)).toEqual({ count: 5 })
+
+    unsub()
+  })
+
+  it('Map fields atom only writes changed fields (no redundant CRDT ops)', () => {
+    const doc = new Y.Doc()
+    const map = doc.getMap<any>('m')
+    map.set('title', 'hello')
+    map.set('count', 5)
+
+    // Track all set operations on the map
+    const setCalls: Array<{ key: string; value: unknown }> = []
+    const originalSet = map.set.bind(map) as typeof map.set
+    ;(map as any).set = <V>(key: string, value: V): V => {
+      setCalls.push({ key, value })
+      return originalSet(key, value)
+    }
+
+    const fieldsAtom = createYMapFieldsAtom(
+      map,
+      ['title', 'count'] as const
+    )
+
+    const store = createStore()
+    const unsub = store.sub(fieldsAtom, () => {})
+
+    // Clear setCalls from any initial operations
+    setCalls.length = 0
+
+    // Write with unchanged count - should only set 'title'
+    store.set(fieldsAtom, { title: 'world', count: 5 })
+    expect(setCalls).toEqual([{ key: 'title', value: 'world' }])
+    expect(map.get('title')).toBe('world')
+    expect(map.get('count')).toBe(5)
+
+    setCalls.length = 0
+
+    // Write with both unchanged - should not call set at all
+    store.set(fieldsAtom, { title: 'world', count: 5 })
+    expect(setCalls).toEqual([])
+
+    setCalls.length = 0
+
+    // Write with only count changed - should only set 'count'
+    store.set(fieldsAtom, prev => ({ ...prev, count: 10 }))
+    expect(setCalls).toEqual([{ key: 'count', value: 10 }])
+
+    unsub()
+  })
+
+  it('Map fields atom fieldEquals option for custom comparison', () => {
+    const doc = new Y.Doc()
+    const map = doc.getMap<any>('m')
+    map.set('data', { nested: 1 })
+
+    // Track set operations
+    const setCalls: string[] = []
+    const originalSet = map.set.bind(map) as typeof map.set
+    ;(map as any).set = <VAL>(key: string, value: VAL): VAL => {
+      setCalls.push(key)
+      return originalSet(key, value)
+    }
+
+    // With deep equality for fields
+    const fieldsAtom = createYMapFieldsAtom(
+      map,
+      ['data'] as const,
+      { fieldEquals: (a, b) => JSON.stringify(a) === JSON.stringify(b) }
+    )
+
+    const store = createStore()
+    const unsub = store.sub(fieldsAtom, () => {})
+
+    setCalls.length = 0
+
+    // Same content, different reference - should not trigger set
+    store.set(fieldsAtom, { data: { nested: 1 } })
+    expect(setCalls).toEqual([])
+
+    // Different content - should trigger set
+    store.set(fieldsAtom, { data: { nested: 2 } })
+    expect(setCalls).toEqual(['data'])
+
+    unsub()
+  })
+
   
 
   it('yAtom source can resubscribe on instance change', () => {
@@ -172,6 +437,7 @@ describe('yJotai adapters', () => {
     const root = doc.getMap<unknown>('root')
     const store = createStore()
     const pathAtom = createYPathAtom(root, ['foo'])
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     // Initial write creates the key
     store.set(pathAtom, 42)
@@ -181,9 +447,12 @@ describe('yJotai adapters', () => {
     store.set(pathAtom, 42)
     expect(root.get('foo')).toBe(42)
 
-    // undefined triggers deletion
+    // undefined is ignored by default writer (no delete)
     store.set(pathAtom, undefined)
-    expect(root.has('foo')).toBe(false)
+    expect(root.has('foo')).toBe(true)
+    expect(root.get('foo')).toBe(42)
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
   })
 
   it('Path atom default writer handles Array semantics', () => {
@@ -192,6 +461,7 @@ describe('yJotai adapters', () => {
     arr.insert(0, ['a', 'b'])
     const store = createStore()
     const pathAtom = createYPathAtom<string | undefined>(arr, [1])
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     expect(store.get(pathAtom)).toBe('b')
 
@@ -202,9 +472,12 @@ describe('yJotai adapters', () => {
     store.set(pathAtom, 'c')
     expect(arr.toArray()[1]).toBe('c')
 
-    // undefined removes the slot
+    // undefined is ignored by default writer (no delete)
     store.set(pathAtom, undefined)
-    expect(arr.length).toBe(1)
+    expect(arr.length).toBe(2)
+    expect(arr.toArray()[1]).toBe('c')
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
 
     // Writing again appends at the desired index
     store.set(pathAtom, 'z')
@@ -264,6 +537,43 @@ describe('yJotai adapters', () => {
 
     // default path doesn't resubscribe; writer semantics are out of scope here
     
+    unsub()
+  })
+
+  it('writes use the same Y instance as reads when resubscribeOnSourceChange=false', () => {
+    const doc1 = new Y.Doc()
+    const doc2 = new Y.Doc()
+    const map1 = doc1.getMap<number>('m')
+    const map2 = doc2.getMap<number>('m')
+
+    const sourceAtom = atom<Y.Map<number>>(map1)
+    const aAtom = createYAtom({
+      yAtom: sourceAtom,
+      read: (m) => (m.get('a') as number | undefined) ?? 0,
+      write: (m, next) => m.set('a', next),
+      eventFilter: (evt) => (evt.keysChanged ? evt.keysChanged.has('a') : true),
+      // resubscribeOnSourceChange is false by default
+    })
+
+    const store = createStore()
+    const unsub = store.sub(aAtom, () => {})
+
+    // initial from map1
+    expect(store.get(aAtom)).toBe(0)
+
+    // write goes to pinned doc (map1)
+    store.set(aAtom, 1)
+    expect(map1.get('a')).toBe(1)
+    expect(map2.get('a')).toBeUndefined()
+
+    // swap source, but subscription stays on map1
+    store.set(sourceAtom, map2)
+
+    // write should still target map1, not map2
+    store.set(aAtom, 2)
+    expect(map1.get('a')).toBe(2)
+    expect(map2.get('a')).toBeUndefined()
+
     unsub()
   })
 
@@ -359,10 +669,14 @@ describe('yJotai adapters', () => {
     store.set(aAtom, 'z')
     expect(arr.toArray()).toEqual(['a', 'b', 'z'])
 
-    // deletion at existing index
+    // deletion at existing index must be handled by a custom writer;
+    // default writer ignores undefined and keeps the value.
     const idxAtom = createYPathAtom<string | undefined>(arr, [1])
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     store.set(idxAtom, undefined)
-    expect(arr.toArray()).toEqual(['a', 'z'])
+    expect(arr.toArray()).toEqual(['a', 'b', 'z'])
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
   })
 
   it('custom equals suppresses object identity changes with same content', () => {
@@ -444,9 +758,9 @@ describe('yJotai adapters', () => {
     store.set(pAtom, 'on')
     expect((root.get('threads') as Y.Array<any>).get(0).get('meta').get('flag')).toBe('on')
 
-    // undefined deletes
+    // undefined is ignored by default writer; key remains.
     store.set(pAtom, undefined)
-    expect((root.get('threads') as Y.Array<any>).get(0).get('meta').has('flag')).toBe(false)
+    expect((root.get('threads') as Y.Array<any>).get(0).get('meta').has('flag')).toBe(true)
   })
 
   it('Text updates from Y side flow through', () => {
