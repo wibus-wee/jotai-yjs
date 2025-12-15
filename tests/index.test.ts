@@ -172,6 +172,7 @@ describe('yJotai adapters', () => {
     const root = doc.getMap<unknown>('root')
     const store = createStore()
     const pathAtom = createYPathAtom(root, ['foo'])
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     // Initial write creates the key
     store.set(pathAtom, 42)
@@ -181,9 +182,12 @@ describe('yJotai adapters', () => {
     store.set(pathAtom, 42)
     expect(root.get('foo')).toBe(42)
 
-    // undefined triggers deletion
+    // undefined is ignored by default writer (no delete)
     store.set(pathAtom, undefined)
-    expect(root.has('foo')).toBe(false)
+    expect(root.has('foo')).toBe(true)
+    expect(root.get('foo')).toBe(42)
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
   })
 
   it('Path atom default writer handles Array semantics', () => {
@@ -192,6 +196,7 @@ describe('yJotai adapters', () => {
     arr.insert(0, ['a', 'b'])
     const store = createStore()
     const pathAtom = createYPathAtom<string | undefined>(arr, [1])
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     expect(store.get(pathAtom)).toBe('b')
 
@@ -202,9 +207,12 @@ describe('yJotai adapters', () => {
     store.set(pathAtom, 'c')
     expect(arr.toArray()[1]).toBe('c')
 
-    // undefined removes the slot
+    // undefined is ignored by default writer (no delete)
     store.set(pathAtom, undefined)
-    expect(arr.length).toBe(1)
+    expect(arr.length).toBe(2)
+    expect(arr.toArray()[1]).toBe('c')
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
 
     // Writing again appends at the desired index
     store.set(pathAtom, 'z')
@@ -264,6 +272,43 @@ describe('yJotai adapters', () => {
 
     // default path doesn't resubscribe; writer semantics are out of scope here
     
+    unsub()
+  })
+
+  it('writes use the same Y instance as reads when resubscribeOnSourceChange=false', () => {
+    const doc1 = new Y.Doc()
+    const doc2 = new Y.Doc()
+    const map1 = doc1.getMap<number>('m')
+    const map2 = doc2.getMap<number>('m')
+
+    const sourceAtom = atom<Y.Map<number>>(map1)
+    const aAtom = createYAtom({
+      yAtom: sourceAtom,
+      read: (m) => (m.get('a') as number | undefined) ?? 0,
+      write: (m, next) => m.set('a', next),
+      eventFilter: (evt) => (evt.keysChanged ? evt.keysChanged.has('a') : true),
+      // resubscribeOnSourceChange is false by default
+    })
+
+    const store = createStore()
+    const unsub = store.sub(aAtom, () => {})
+
+    // initial from map1
+    expect(store.get(aAtom)).toBe(0)
+
+    // write goes to pinned doc (map1)
+    store.set(aAtom, 1)
+    expect(map1.get('a')).toBe(1)
+    expect(map2.get('a')).toBeUndefined()
+
+    // swap source, but subscription stays on map1
+    store.set(sourceAtom, map2)
+
+    // write should still target map1, not map2
+    store.set(aAtom, 2)
+    expect(map1.get('a')).toBe(2)
+    expect(map2.get('a')).toBeUndefined()
+
     unsub()
   })
 
@@ -359,10 +404,14 @@ describe('yJotai adapters', () => {
     store.set(aAtom, 'z')
     expect(arr.toArray()).toEqual(['a', 'b', 'z'])
 
-    // deletion at existing index
+    // deletion at existing index must be handled by a custom writer;
+    // default writer ignores undefined and keeps the value.
     const idxAtom = createYPathAtom<string | undefined>(arr, [1])
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     store.set(idxAtom, undefined)
-    expect(arr.toArray()).toEqual(['a', 'z'])
+    expect(arr.toArray()).toEqual(['a', 'b', 'z'])
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
   })
 
   it('custom equals suppresses object identity changes with same content', () => {
@@ -444,9 +493,9 @@ describe('yJotai adapters', () => {
     store.set(pAtom, 'on')
     expect((root.get('threads') as Y.Array<any>).get(0).get('meta').get('flag')).toBe('on')
 
-    // undefined deletes
+    // undefined is ignored by default writer; key remains.
     store.set(pAtom, undefined)
-    expect((root.get('threads') as Y.Array<any>).get(0).get('meta').has('flag')).toBe(false)
+    expect((root.get('threads') as Y.Array<any>).get(0).get('meta').has('flag')).toBe(true)
   })
 
   it('Text updates from Y side flow through', () => {

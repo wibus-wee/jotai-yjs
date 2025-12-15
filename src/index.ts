@@ -7,6 +7,8 @@ import { shallowEqual, deepEquals } from './utils'
 type Equals<T> = (a: T, b: T) => boolean;
 const defaultEquals = <T>(a: T, b: T): boolean => shallowEqual(a, b);
 const UNSET: unique symbol = Symbol('jotai-yjs/UNSET');
+const ATOM_WRITE_ORIGIN: unique symbol = Symbol('jotai-yjs/atom-write');
+const PATH_WRITE_ORIGIN: unique symbol = Symbol('jotai-yjs/path-write');
 
 type YArrayDelta<T> = Array<
   { retain: number } | { insert: T[] } | { delete: number }
@@ -40,7 +42,11 @@ function subscribeY<T extends Y.AbstractType<any>>(
 }
 
 /** Run a function inside a Y.Doc transaction when available. */
-export function withTransact(doc: Y.Doc | null, fn: () => void): void {
+export function withTransact(
+  doc: Y.Doc | null,
+  fn: () => void,
+  origin?: unknown
+): void {
   if (!doc) {
     if (process.env.NODE_ENV !== 'production') {
       console.warn('[y-jotai] Y type is not attached to a document. Operations may not be properly transacted.');
@@ -48,7 +54,7 @@ export function withTransact(doc: Y.Doc | null, fn: () => void): void {
     fn();
     return;
   }
-  doc.transact(fn);
+  doc.transact(fn, origin);
 }
 
 export interface CreateYAtomSharedOptions<YType extends Y.AbstractType<any>, T> {
@@ -78,6 +84,11 @@ export interface CreateYAtomSharedOptions<YType extends Y.AbstractType<any>, T> 
    * is cleaned up and a new one is installed, and a fresh snapshot is emitted.
    */
   resubscribeOnSourceChange?: boolean;
+  /**
+   * Optional transaction origin passed to Y.Doc.transact for writes.
+   * Can be a static value or a function to derive origin per write.
+   */
+  transactionOrigin?: unknown | ((params: { y: YType; type: 'write' }) => unknown);
 }
 
 export type CreateYAtomOptions<YType extends Y.AbstractType<any>, T> =
@@ -100,6 +111,7 @@ export function createYAtom<YType extends Y.AbstractType<any>, T>(
     deep,
     eventFilter,
     resubscribeOnSourceChange,
+    transactionOrigin,
   } = opts;
   const hasYAtom = 'yAtom' in opts && opts.yAtom !== undefined;
 
@@ -220,14 +232,18 @@ export function createYAtom<YType extends Y.AbstractType<any>, T>(
     },
     (get, _set, update) => {
       if (!write) return;
-      const y = get(ySourceAtom);
+      const y = getActiveY(get);
       const current = read(y);
       const next =
         typeof update === 'function'
           ? (update as (p: T) => T)(current)
           : update;
       if (equals(current, next)) return;
-      withTransact(y.doc, () => write(y, next));
+      const origin =
+        typeof transactionOrigin === 'function'
+          ? transactionOrigin({ y, type: 'write' })
+          : transactionOrigin ?? ATOM_WRITE_ORIGIN;
+      withTransact(y.doc, () => write(y, next), origin);
     }
   );
 
@@ -392,6 +408,12 @@ export function createYTextAtom(
  * Generic deep path atom (Map/Array traversal). For convenience when you cannot
  * subscribe narrowly. Prefer specialized atoms when possible for performance.
  */
+type PathTransactionOrigin = (params: {
+  root: Y.AbstractType<any>;
+  path: Array<string | number>;
+  type: 'write';
+}) => unknown;
+
 export function createYPathAtom<TSnapshot>(
   root: Y.AbstractType<any>,
   path: Array<string | number>,
@@ -400,6 +422,7 @@ export function createYPathAtom<TSnapshot>(
     write?: (parent: unknown, last: string | number, next: TSnapshot) => void;
     equals?: Equals<TSnapshot>;
     deep?: boolean;
+     transactionOrigin?: unknown | PathTransactionOrigin;
   }
 ): WritableAtom<
   TSnapshot,
@@ -439,7 +462,7 @@ export function createYPathAtom<TSnapshot>(
         .slice(0, -1)
         .reduce<unknown>((acc, seg) => resolve(acc, seg), root);
       const last = path[path.length - 1]!;
-      withTransact(root.doc, () => write(parent, last, next));
+      write(parent, last, next);
       return;
     }
     // Default writer for common Map/Array endpoints
@@ -453,53 +476,72 @@ export function createYPathAtom<TSnapshot>(
       .slice(0, -1)
       .reduce<unknown>((acc, seg) => resolve(acc, seg), root);
     const last = path[path.length - 1]!;
-    withTransact(root.doc, () => {
-      if (!(parent instanceof Y.Map) && !(parent instanceof Y.Array)) {
+    if (!(parent instanceof Y.Map) && !(parent instanceof Y.Array)) {
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn(
+          'createYPathAtom: unable to resolve parent for path, skipping write',
+          path
+        );
+      }
+      return;
+    }
+    if (parent instanceof Y.Map) {
+      const key = String(last);
+      if (next === undefined) {
         if (process.env.NODE_ENV !== 'production') {
           console.warn(
-            'createYPathAtom: unable to resolve parent for path, skipping write',
+            '[y-jotai] createYPathAtom default writer ignores undefined; use a custom writer or explicit delete atom to remove keys.',
             path
           );
         }
         return;
       }
-      if (parent instanceof Y.Map) {
-        const key = String(last);
-        if (next === undefined) {
-          if (parent.has(key)) parent.delete(key);
-          return;
-        }
-        const current = parent.get(key);
-        if (deepEquals(current, next)) return;
-        parent.set(key, next);
-        return;
+      const current = parent.get(key);
+      if (deepEquals(current, next)) return;
+      parent.set(key, next);
+      return;
+    }
+    const idx = Number(last);
+    if (!Number.isFinite(idx)) {
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn(
+          'createYPathAtom: array index is not finite, skipping write',
+          last
+        );
       }
-      const idx = Number(last);
-      if (!Number.isFinite(idx)) {
-        if (process.env.NODE_ENV !== 'production') {
-          console.warn(
-            'createYPathAtom: array index is not finite, skipping write',
-            last
-          );
-        }
-        return;
+      return;
+    }
+    const boundedIndex = Math.min(Math.max(idx, 0), parent.length);
+    const hasSlot = idx >= 0 && idx < parent.length;
+    if (next === undefined) {
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn(
+          '[y-jotai] createYPathAtom default writer ignores undefined; use a custom writer or explicit delete atom to remove indices.',
+          path
+        );
       }
-      const boundedIndex = Math.min(Math.max(idx, 0), parent.length);
-      const hasSlot = idx >= 0 && idx < parent.length;
-      if (next === undefined) {
-        if (hasSlot) parent.delete(idx, 1);
-        return;
-      }
-      if (hasSlot) {
-        const current = parent.get(idx);
-        if (deepEquals(current, next)) return;
-        parent.delete(idx, 1);
-        parent.insert(idx, [next]);
-        return;
-      }
-      parent.insert(boundedIndex, [next]);
-    });
+      return;
+    }
+    if (hasSlot) {
+      const current = parent.get(idx);
+      if (deepEquals(current, next)) return;
+      parent.delete(idx, 1);
+      parent.insert(idx, [next]);
+      return;
+    }
+    parent.insert(boundedIndex, [next]);
   };
+
+  const isPathTransactionOrigin = (
+    value: unknown
+  ): value is PathTransactionOrigin => typeof value === 'function';
+
+  const pathOrigin = opts?.transactionOrigin;
+  const atomTransactionOrigin =
+    isPathTransactionOrigin(pathOrigin)
+      ? (_params: { y: Y.AbstractType<any>; type: 'write' }) =>
+          pathOrigin({ root, path, type: 'write' })
+      : pathOrigin ?? PATH_WRITE_ORIGIN;
 
   return createYAtom({
     y: root,
@@ -507,6 +549,7 @@ export function createYPathAtom<TSnapshot>(
     write: (_y, next) => writeAtPath(next),
     equals,
     deep: opts?.deep ?? true, // path atom typically needs deep observation
+    transactionOrigin: atomTransactionOrigin,
   });
 }
 

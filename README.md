@@ -3,12 +3,15 @@
 Thin, typed bridge between Yjs types and Jotai atoms.
 
 > [!WARNING]
-> This is an early release. The API and behavior may change in future versions. *This library has a high usage cost; you may need to read the source code to understand the design details.*
+> This is an early release. The API and behavior may change in future versions. This library is small and opinionated; please read the Semantics before adopting.
 
 ## Highlights
 
+- Semantics first: reads are pure projections; writes are explicit.
+- `undefined` is ignored by default (no implicit delete); delete explicitly or provide a custom writer.
+- All writes run in Y transactions and can carry an origin for observability.
 - Accepts both a concrete `y` instance or a `yAtom` source atom.
-- Event-driven updates from Yjs; no duplicate sets after writes.
+- Event-driven updates from Yjs; writes rely on Y events to refresh the snapshot (no manual state sets).
 - Narrow subscriptions by default; opt-in deep observation when you need it.
 - SSR/hydration-friendly: first frame matches the current Y state.
 
@@ -80,18 +83,22 @@ export const titleAtomFamily = atomFamily((id: string) =>
 By default, subscriptions are pinned to the initial instance (`resubscribeOnSourceChange: false`). Set it to `true` to automatically unsubscribe from the old Y instance and subscribe to the new one, with an immediate snapshot sync.
 
 Notes
-- Writes always target the current `get(yAtom)` instance; updates still flow via Y events.
+- Writes follow the active Y instance:
+  - `resubscribeOnSourceChange: false` (default): reads/writes stay pinned to the initial instance from first mount.
+  - `resubscribeOnSourceChange: true`: reads/writes move with the latest `yAtom` value.
+- Updates always flow via Y events; no manual state set after writes.
 - SSR/hydration: derived state ensures the first frame matches the current Y snapshot.
 
 ## Behavior & Semantics
 
-- Event-driven updates: we never set state after a write; Yjs events drive updates.
+- Event-driven updates: writes rely on Y events to update the cached snapshot (no direct state set after write).
 - Equality suppression: `equals` prevents redundant updates; defaults to deep equality.
 - Deep vs shallow observation:
   - `deep: true` uses `observeDeep` and ignores `eventFilter`.
   - `deep: false` (default) uses narrow observation; you can provide `eventFilter` to filter events precisely.
 - Transactions coalesce: multiple Y operations inside a single `doc.transact(...)` result in at most one update.
 - Writer supports functional updates: `set(atom, prev => next)` is supported; the write executes inside a transaction via `withTransact`.
+- Transactions carry origins: writes from `createYAtom` and `createYPathAtom` are tagged with default origins (`[y-jotai] atom-write` / `[y-jotai] path-write`); you can override this via `transactionOrigin` for easier debugging.
 - Unmount cleanup: subscriptions are removed on unmount; no callbacks after unsubscribe.
 
 ## Patterns
@@ -103,14 +110,19 @@ Notes
   - `createYTextAtom(text)` for text content
 - Arbitrary paths: `createYPathAtom(root, ['a', 0, 'b'])` traverses Map/Array mixes.
   - Default writer semantics:
-    - Map: `undefined` deletes the key.
-    - Array: index is clamped to [0, length]; `undefined` deletes the slot if it exists, otherwise no-op.
+    - Map: `undefined` is ignored; use a custom writer or dedicated delete atom when you need to remove keys.
+    - Array: index is clamped to [0, length]; `undefined` is ignored; use a custom writer or dedicated delete atom when you need to remove slots.
 
 ## Notes on resubscribeOnSourceChange
 
-- Default is `false`: the subscription is pinned to the initial instance; updates keep flowing from the old source even if `yAtom` changes.
-- When `true`: on `yAtom` changes, we unsubscribe from the old instance and subscribe to the new one, and sync the latest snapshot immediately.
-- Writes always target the current `get(yAtom)` instance, regardless of the resubscribe option.
+- Default is `false` (stable/pinned):
+  - Subscriptions stay on the initial instance even if `yAtom` later changes.
+  - Reads/writes both hit the initial instance (avoids ghost writes to a different doc).
+  - Use when you want stability and the source is expected to remain the same.
+- `true` (follow source):
+  - On `yAtom` change, unsubscribe old, subscribe new, and sync immediately.
+  - Reads/writes both target the latest `yAtom` instance (safe for doc swap flows).
+  - Use when you intentionally swap documents/roots and want updates to follow.
 
 ## Advanced Usage
 
@@ -245,9 +257,15 @@ export const firstFriendNameAtom = createYPathAtom<string | undefined>(root, [
   'profile', 'friends', 0, 'name',
 ])
 
-// Delete the key by writing undefined
-// set(firstFriendNameAtom, undefined)
+// Default writer ignores undefined; to delete a key,
+// provide a custom writer or a dedicated delete atom.
 ```
+
+## Non-goals / Safety
+
+- No automatic diff/patch for arbitrary objects (beyond the built-in text diff); bring your own if needed.
+- No implicit deletes: default writers ignore `undefined`; delete explicitly or supply a custom writer.
+- Yjs values should be JSON-like/serializable; avoid storing non-serializable data if you need portability or persistence.
 
 ### From coarse to fine (eventFilter for precision)
 
