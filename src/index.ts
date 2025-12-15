@@ -313,6 +313,11 @@ export interface CreateYMapEntryAtomOptions<TEntry extends Y.AbstractType<any>> 
    * deletion is preferable to tombstones. Default: false.
    */
   deleteOnNull?: boolean;
+  /**
+   * When the map source is an atom, resubscribe to a new map instance when the
+   * source changes. Default: false.
+   */
+  resubscribeOnSourceChange?: boolean;
 }
 
 /**
@@ -340,7 +345,7 @@ export function createYMapEntryAtom<TEntry extends Y.AbstractType<any>>(
   void
 >;
 export function createYMapEntryAtom<TEntry extends Y.AbstractType<any>>(
-  map: Y.Map<unknown>,
+  mapAtom: Atom<Y.Map<TEntry | null>>,
   key: string,
   opts?: CreateYMapEntryAtomOptions<TEntry>
 ): WritableAtom<
@@ -356,6 +361,24 @@ export function createYMapEntryAtom<TEntry extends Y.AbstractType<any>>(
   TEntry | null,
   [TEntry | null | ((prev: TEntry | null) => TEntry | null)],
   void
+>;
+export function createYMapEntryAtom<TEntry extends Y.AbstractType<any>>(
+  mapAtom: Atom<Y.Map<unknown>>,
+  key: string,
+  opts?: CreateYMapEntryAtomOptions<TEntry>
+): WritableAtom<
+  TEntry | null,
+  [TEntry | null | ((prev: TEntry | null) => TEntry | null)],
+  void
+>;
+export function createYMapEntryAtom<TEntry extends Y.AbstractType<any>>(
+  map: Y.Map<unknown> | Atom<Y.Map<unknown>>,
+  key: string,
+  opts?: CreateYMapEntryAtomOptions<TEntry>
+): WritableAtom<
+  TEntry | null,
+  [TEntry | null | ((prev: TEntry | null) => TEntry | null)],
+  void
 > {
   if (process.env.NODE_ENV !== 'production') {
     if (typeof key !== 'string' || key === '') {
@@ -363,9 +386,16 @@ export function createYMapEntryAtom<TEntry extends Y.AbstractType<any>>(
     }
   }
 
+  const isAtom = (value: unknown): value is Atom<Y.Map<unknown>> =>
+    typeof value === 'object' &&
+    value !== null &&
+    'read' in (value as Record<string, unknown>) &&
+    typeof (value as { read?: unknown }).read === 'function';
+
   const typeGuard = opts?.typeGuard;
   const equals: Equals<TEntry | null> = opts?.equals ?? ((a, b) => a === b);
   const deleteOnNull = opts?.deleteOnNull ?? false;
+  const resubscribeOnSourceChange = opts?.resubscribeOnSourceChange ?? false;
 
   const readEntry = (m: Y.Map<unknown>): TEntry | null => {
     const value = m.get(key);
@@ -373,8 +403,12 @@ export function createYMapEntryAtom<TEntry extends Y.AbstractType<any>>(
     return value instanceof Y.AbstractType ? (value as TEntry) : null;
   };
 
+  const mapAtom: Atom<Y.Map<unknown>> = isAtom(map)
+    ? map
+    : atom(map as Y.Map<unknown>);
+
   return createYAtom({
-    y: map,
+    yAtom: mapAtom,
     read: (m) => readEntry(m),
     write: (m, next) => {
       if (next === null && deleteOnNull) {
@@ -385,6 +419,7 @@ export function createYMapEntryAtom<TEntry extends Y.AbstractType<any>>(
     },
     equals,
     eventFilter: (evt) => (evt.keysChanged ? evt.keysChanged.has(key) : true),
+    resubscribeOnSourceChange,
   });
 }
 
