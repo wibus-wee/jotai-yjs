@@ -15,8 +15,9 @@ describe('yJotai adapters', () => {
   it('Map key atom updates only when the key changes', () => {
     const doc = new Y.Doc()
     const map = doc.getMap<number>('m')
-    const aAtom = createYMapKeyAtom<number, number>(map, 'a', {
-      decode: (v) => (typeof v === 'number' ? v : 0),
+    const aAtom = createYMapKeyAtom(map, 'a', {
+      decode: (v): number => (typeof v === 'number' ? v : 0),
+      encode: (v: number): number => v,
     })
 
     const store = createStore()
@@ -49,11 +50,12 @@ describe('yJotai adapters', () => {
 
   it('Map entry atom tracks Y type reference and filters by key', () => {
     const doc = new Y.Doc()
-    const map = doc.getMap<unknown>('m')
-    const entryAtom = createYMapEntryAtom<Y.Map<any>>(map, 'child')
+    type ChildMap = Y.Map<number>
+    const map = doc.getMap<ChildMap>('m')
+    const entryAtom = createYMapEntryAtom(map, 'child')
 
     const store = createStore()
-    const seen: Array<Y.Map<any> | null> = []
+    const seen: Array<ChildMap | null> = []
 
     const unsubscribe = store.sub(entryAtom, () => {
       seen.push(store.get(entryAtom))
@@ -61,21 +63,21 @@ describe('yJotai adapters', () => {
     seen.push(store.get(entryAtom))
     expect(seen.at(-1)).toBeNull()
 
-    const first = new Y.Map<any>()
+    const first = new Y.Map<number>()
     first.set('v', 1)
     map.set('child', first)
     expect(store.get(entryAtom)).toBe(first)
     expect(seen.at(-1)).toBe(first)
 
     // Replacing with a new reference should update
-    const second = new Y.Map<any>()
+    const second = new Y.Map<number>()
     map.set('child', second)
     expect(store.get(entryAtom)).toBe(second)
     expect(seen.at(-1)).toBe(second)
 
     // Unrelated key should be filtered out
     const before = seen.length
-    map.set('other', new Y.Map<any>())
+    map.set('other', new Y.Map<number>())
     expect(seen.length).toBe(before)
 
     unsubscribe()
@@ -87,8 +89,9 @@ describe('yJotai adapters', () => {
     arr.insert(0, [1, 2, 3])
 
     const idx = 1
-    const aAtom = createYArrayIndexAtom<number, number>(arr, idx, {
-      decode: (v) => (typeof v === 'number' ? v : -1),
+    const aAtom = createYArrayIndexAtom(arr, idx, {
+      decode: (v): number => (typeof v === 'number' ? v : -1),
+      encode: (v: number): number => v,
     })
 
     const store = createStore()
@@ -161,11 +164,12 @@ describe('yJotai adapters', () => {
 
   it('Map fields atom narrows updates to selected keys with shallow equals', () => {
     const doc = new Y.Doc()
-    const map = doc.getMap<any>('m')
-    const fieldsAtom = createYMapFieldsAtom(map, ['title', 'status'] as const)
+    const map = doc.getMap<string>('m')
+    type Fields = { title: string; status: string }
+    const fieldsAtom = createYMapFieldsAtom<Fields, readonly ['title', 'status']>(map, ['title', 'status'] as const)
 
     const store = createStore()
-    const seen: Array<Partial<{ title?: string; status?: string }>> = []
+    const seen: Array<Partial<Fields>> = []
 
     const unsubscribe = store.sub(fieldsAtom, () => {
       seen.push(store.get(fieldsAtom))
@@ -194,15 +198,16 @@ describe('yJotai adapters', () => {
 
   it('Map fields atom supports includeUndefined and partial writes', () => {
     const doc = new Y.Doc()
-    const map = doc.getMap<any>('m')
-    const fieldsAtom = createYMapFieldsAtom(
+    const map = doc.getMap<string | number>('m')
+    type Fields = { title: string; count: number }
+    const fieldsAtom = createYMapFieldsAtom<Fields, readonly ['title', 'count']>(
       map,
       ['title', 'count'] as const,
       { includeUndefined: true }
     )
 
     const store = createStore()
-    const seen: Array<Partial<{ title?: string; count?: number }>> = []
+    const seen: Array<Partial<Fields>> = []
 
     const unsubscribe = store.sub(fieldsAtom, () => {
       seen.push(store.get(fieldsAtom))
@@ -230,13 +235,14 @@ describe('yJotai adapters', () => {
 
   it('Map entry atom deleteOnNull removes key from map', () => {
     const doc = new Y.Doc()
-    const map = doc.getMap<Y.Map<any> | null>('m')
-    const entryAtom = createYMapEntryAtom<Y.Map<any>>(map, 'child', {
+    type ChildMap = Y.Map<number>
+    const map = doc.getMap<ChildMap | null>('m')
+    const entryAtom = createYMapEntryAtom<typeof map, ChildMap>(map, 'child', {
       deleteOnNull: true,
     })
 
     const store = createStore()
-    const seen: Array<Y.Map<any> | null> = []
+    const seen: Array<ChildMap | null> = []
 
     const unsubscribe = store.sub(entryAtom, () => {
       seen.push(store.get(entryAtom))
@@ -245,7 +251,7 @@ describe('yJotai adapters', () => {
     expect(seen.at(-1)).toBeNull()
 
     // Set a Y.Map entry
-    const child = new Y.Map<any>()
+    const child = new Y.Map<number>()
     child.set('v', 1)
     store.set(entryAtom, child)
     expect(map.get('child')).toBe(child)
@@ -261,14 +267,15 @@ describe('yJotai adapters', () => {
 
   it('Map entry atom without deleteOnNull stores null value', () => {
     const doc = new Y.Doc()
-    const map = doc.getMap<Y.Map<any> | null>('m')
-    const entryAtom = createYMapEntryAtom<Y.Map<any>>(map, 'child')
+    type ChildMap = Y.Map<number>
+    const map = doc.getMap<ChildMap | null>('m')
+    const entryAtom = createYMapEntryAtom<typeof map, ChildMap>(map, 'child')
 
     const store = createStore()
     const unsub = store.sub(entryAtom, () => {})
 
     // Set a Y.Map entry
-    const child = new Y.Map<any>()
+    const child = new Y.Map<number>()
     store.set(entryAtom, child)
     expect(map.get('child')).toBe(child)
 
@@ -430,6 +437,128 @@ describe('yJotai adapters', () => {
     expect(seen.at(-1)).toBe(101)
 
     unsubscribe()
+  })
+
+  it('supports nullable yAtom sources; no-ops writes before ready; resubscribes across sources', () => {
+    const doc = new Y.Doc()
+    const map1 = doc.getMap<number>('m1')
+    const map2 = doc.getMap<number>('m2')
+
+    const sourceAtom = atom<Y.Map<number> | null>(null)
+
+    const aAtom = createYAtom({
+      yAtom: sourceAtom,
+      read: (m) => (m ? (m.get('a') as number | undefined) ?? -1 : -1),
+      write: (m, next) => m.set('a', next),
+      eventFilter: (evt) => (evt.keysChanged ? evt.keysChanged.has('a') : true),
+      resubscribeOnSourceChange: true,
+    })
+
+    const store = createStore()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    // Initial read from null source
+    expect(store.get(aAtom)).toBe(-1)
+
+    // Write while source is null should warn and no-op
+    store.set(aAtom, 5)
+    expect(map1.has('a')).toBe(false)
+    expect(map2.has('a')).toBe(false)
+    expect(warn).toHaveBeenCalled()
+    warn.mockClear()
+
+    // Bring source online (map1)
+    store.set(sourceAtom, map1)
+    expect(store.get(aAtom)).toBe(-1)
+    expect(warn).not.toHaveBeenCalled()
+
+    // External Yjs changes should propagate
+    map1.set('a', 1)
+    expect(store.get(aAtom)).toBe(1)
+
+    // Writes now apply to the map, and should not warn
+    store.set(aAtom, 2)
+    expect(map1.get('a')).toBe(2)
+    expect(warn).not.toHaveBeenCalled()
+
+    // Swap source to map2 (resubscribe)
+    store.set(sourceAtom, map2)
+    expect(store.get(aAtom)).toBe(-1)
+
+    // Changes to old source must NOT affect atom anymore
+    map1.set('a', 9)
+    expect(store.get(aAtom)).toBe(-1)
+
+    // Changes to new source should affect atom
+    map2.set('a', 7)
+    expect(store.get(aAtom)).toBe(7)
+
+    // Writes should go to new source
+    store.set(aAtom, 8)
+    expect(map2.get('a')).toBe(8)
+    expect(warn).not.toHaveBeenCalled()
+
+    warn.mockRestore()
+  })
+
+  it('map entry atom tolerates nullable map source; no-ops writes before ready; resubscribes across maps', () => {
+    const doc = new Y.Doc()
+    const parent1 = doc.getMap<Y.Map<any>>('parent1')
+    const parent2 = doc.getMap<Y.Map<any>>('parent2')
+
+    const mapAtom = atom<Y.Map<Y.Map<any>> | null>(null)
+
+    const entryAtom = createYMapEntryAtom<Y.Map<any>>(mapAtom, 'child', {
+      deleteOnNull: true,
+      resubscribeOnSourceChange: true,
+    })
+
+    const store = createStore()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    // Null parent -> entry is null
+    expect(store.get(entryAtom)).toBeNull()
+
+    // Write while parent is null should warn and no-op
+    store.set(entryAtom, new Y.Map<any>())
+    expect(parent1.has('child')).toBe(false)
+    expect(parent2.has('child')).toBe(false)
+    expect(warn).toHaveBeenCalled()
+    warn.mockClear()
+
+    // Bring parent online (parent1)
+    store.set(mapAtom, parent1)
+    expect(store.get(entryAtom)).toBeNull()
+    expect(warn).not.toHaveBeenCalled()
+
+    // Create child in parent1 -> should propagate
+    const child1 = new Y.Map<any>()
+    parent1.set('child', child1)
+    expect(store.get(entryAtom)).toBe(child1)
+
+    // Delete via atom (deleteOnNull)
+    store.set(entryAtom, null)
+    expect(parent1.has('child')).toBe(false)
+    expect(warn).not.toHaveBeenCalled()
+
+    // Recreate then swap to parent2 (resubscribe)
+    const child1b = new Y.Map<any>()
+    parent1.set('child', child1b)
+    expect(store.get(entryAtom)).toBe(child1b)
+
+    store.set(mapAtom, parent2)
+    expect(store.get(entryAtom)).toBeNull()
+
+    // Changes to old parent must NOT affect atom anymore
+    parent1.set('child', new Y.Map<any>())
+    expect(store.get(entryAtom)).toBeNull()
+
+    // Changes to new parent should affect atom
+    const child2 = new Y.Map<any>()
+    parent2.set('child', child2)
+    expect(store.get(entryAtom)).toBe(child2)
+
+    warn.mockRestore()
   })
 
   it('Path atom default writer handles Map semantics', () => {
@@ -726,7 +855,7 @@ describe('yJotai adapters', () => {
   it('stops notifying after unsubscribe', () => {
     const doc = new Y.Doc()
     const map = doc.getMap<number>('m')
-    const aAtom = createYMapKeyAtom<number, number>(map, 'a', {
+    const aAtom = createYMapKeyAtom(map, 'a', {
       decode: (v) => (typeof v === 'number' ? v : 0),
     })
     const store = createStore()

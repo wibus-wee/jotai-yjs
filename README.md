@@ -11,6 +11,7 @@ Thin, typed bridge between Yjs types and Jotai atoms.
 - `undefined` is ignored by default (no implicit delete); delete explicitly or provide a custom writer.
 - All writes run in Y transactions and can carry an origin for observability.
 - Accepts both a concrete `y` instance or a `yAtom` source atom.
+- Supports nullable sources: `y`/`yAtom` can be `null` (no subscription; read still runs; writes no-op with dev warning until ready).
 - Event-driven updates from Yjs; writes rely on Y events to refresh the snapshot (no manual state sets).
 - Narrow subscriptions by default; opt-in deep observation when you need it.
 - SSR/hydration-friendly: first frame matches the current Y state.
@@ -88,6 +89,46 @@ Notes
   - `resubscribeOnSourceChange: true`: reads/writes move with the latest `yAtom` value.
 - Updates always flow via Y events; no manual state set after writes.
 - SSR/hydration: derived state ensures the first frame matches the current Y snapshot.
+## Nullable source (writing when the root isn't ready)
+
+In real apps the Y root is often `null` initially and later swapped for a real Y type when ready. `createYAtom` and `createYMapEntryAtom` now accept `y`/`yAtom` being `null`:
+
+- `read` will receive `null` and can return a placeholder (e.g. `null` or a default object).
+- When the source is `null` the atom does not subscribe to Y events.
+- Writes are no-ops while the source is `null`; a dev warning is emitted to avoid writing to an uninitialized document.
+- When the source changes from `null` to a real instance, the atom subscribes and syncs the snapshot according to `resubscribeOnSourceChange`:
+  - Default `false`: the first non-null instance is pinned; later `yAtom` changes do not switch the active source.
+  - `true`: each source change causes an unsubscribe/subscribe and an immediate fallback to `read(y)`.
+
+Example: root not ready → ready flow
+
+```ts
+const rootRefAtom = atom<Y.Map<unknown> | null>(null)
+
+// Nullable map source
+const cellMapRefAtom = atom((get) => {
+  const root = get(rootRefAtom)
+  return root ? (root.get('cells') as Y.Map<unknown>) : null
+})
+
+// Entry atom also accepts a mapAtom that may be null
+const cellEntryFamily = atomFamily((id: string) =>
+  createYMapEntryAtom<Y.Map<any>>(cellMapRefAtom, id, {
+    deleteOnNull: true,
+    resubscribeOnSourceChange: true,
+  })
+)
+
+// On read, read receives null → produce a placeholder
+const cellTitleFamily = atomFamily((id: string) =>
+  createYAtom({
+    yAtom: cellEntryFamily(id),
+    read: (cell) => (cell ? (cell.get('title') as string | null) : null),
+    write: (cell, next) => cell.set('title', next),
+    resubscribeOnSourceChange: true,
+  })
+)
+```
 
 ## Behavior & Semantics
 
@@ -96,6 +137,8 @@ Notes
 - Deep vs shallow observation:
   - `deep: true` uses `observeDeep` and ignores `eventFilter`.
   - `deep: false` (default) uses narrow observation; you can provide `eventFilter` to filter events precisely.
+- Nullable sources: 当 `y`/`yAtom` 为 `null` 时不订阅，`read` 仍会执行；写入会被忽略并在 dev 环境告警；出现真实实例后按 `resubscribeOnSourceChange` 语义运行（默认 pinned）。
+Nullable sources: when `y`/`yAtom` is `null`, the atom does not subscribe to Y events but `read` still runs; writes are no‑ops (with a dev warning). When a real instance becomes available, the atom follows the `resubscribeOnSourceChange` semantics (pinned/false by default).
 - Transactions coalesce: multiple Y operations inside a single `doc.transact(...)` result in at most one update.
 - Writer supports functional updates: `set(atom, prev => next)` is supported; the write executes inside a transaction via `withTransact`.
 - Transactions carry origins: writes from `createYAtom` and `createYPathAtom` are tagged with default origins (`[y-jotai] atom-write` / `[y-jotai] path-write`); you can override this via `transactionOrigin` for easier debugging.
