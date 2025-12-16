@@ -2,6 +2,9 @@ import { atom, type Atom, type WritableAtom } from 'jotai'
 import * as Y from 'yjs'
 import diff from 'fast-diff'
 import { shallowEqual, deepEquals } from './utils'
+import type { YType, YMapValue, YStorableType } from './types'
+
+export type { YType, YMapValue, YArrayItem, YStorableType } from './types'
 
 /** Equality function used to suppress redundant updates. */
 type Equals<T> = (a: T, b: T) => boolean;
@@ -14,24 +17,24 @@ type YArrayDelta<T> = Array<
   { retain: number } | { insert: T[] } | { delete: number }
 >;
 
-type YEventOf<T extends Y.AbstractType<any>> = 
+type YEventOf<T extends YType> =
   T extends Y.Map<infer V> ? Y.YMapEvent<V> :
   T extends Y.Array<infer V> ? Y.YArrayEvent<V> :
   T extends Y.Text ? Y.YTextEvent :
   Y.YEvent<T>;
 
-type SubscribeEvent<T extends Y.AbstractType<any>> =
+type SubscribeEvent<T extends YType> =
   | YEventOf<T>
-  | Y.YEvent<any>[];
+  | Y.YEvent<YType>[];
 
 /** Internal util: subscribe to a Y type with optional deep observation. */
-function subscribeY<T extends Y.AbstractType<any>>(
+function subscribeY<T extends YType>(
   y: T,
   onChange: (evt: SubscribeEvent<T>, tr: Y.Transaction) => void,
   options?: { deep?: boolean }
 ): () => void {
   if (options?.deep) {
-    const handler = (evts: Y.YEvent<any>[], tr: Y.Transaction) =>
+    const handler = (evts: Y.YEvent<YType>[], tr: Y.Transaction) =>
       onChange(evts, tr);
     y.observeDeep(handler);
     return () => y.unobserveDeep(handler);
@@ -57,15 +60,18 @@ export function withTransact(
   doc.transact(fn, origin);
 }
 
-export interface CreateYAtomSharedOptions<YType extends Y.AbstractType<any>, T> {
+export interface CreateYAtomSharedOptions<
+  YSource extends YType | null,
+  T
+> {
   /** Read function to project the Y value into a typed snapshot T. */
-  read: (y: YType) => T;
+  read: (y: YSource) => T;
   /**
    * Optional write function that applies the next T to the underlying Y type
    * using native Yjs operations. It will be invoked inside a transaction if
    * the Y type is attached to a Y.Doc.
    */
-  write?: (y: YType, next: T) => void;
+  write?: (y: NonNullable<YSource>, next: T) => void;
   /** Optional equality to suppress redundant sets. Default: deep equality. */
   equals?: Equals<T>;
   /**
@@ -77,7 +83,7 @@ export interface CreateYAtomSharedOptions<YType extends Y.AbstractType<any>, T> 
    * Optional filter to ignore unrelated Y events before calling read().
    * This helps narrow updates further (e.g., only when a Map key changes).
    */
-  eventFilter?: (evt: YEventOf<YType>) => boolean;
+  eventFilter?: (evt: YEventOf<NonNullable<YSource>>) => boolean;
   /**
    * When using `yAtom` as the source, optionally resubscribe to a new instance
    * when the source atom value changes. If enabled, the previous subscription
@@ -88,12 +94,14 @@ export interface CreateYAtomSharedOptions<YType extends Y.AbstractType<any>, T> 
    * Optional transaction origin passed to Y.Doc.transact for writes.
    * Can be a static value or a function to derive origin per write.
    */
-  transactionOrigin?: unknown | ((params: { y: YType; type: 'write' }) => unknown);
+  transactionOrigin?:
+    | unknown
+    | ((params: { y: NonNullable<YSource>; type: 'write' }) => unknown);
 }
 
-export type CreateYAtomOptions<YType extends Y.AbstractType<any>, T> =
-  | ({ y: YType; yAtom?: never } & CreateYAtomSharedOptions<YType, T>)
-  | ({ yAtom: Atom<YType>; y?: never } & CreateYAtomSharedOptions<YType, T>);
+export type CreateYAtomOptions<YSource extends YType | null, T> =
+  | ({ y: YSource; yAtom?: never } & CreateYAtomSharedOptions<YSource, T>)
+  | ({ yAtom: Atom<YSource>; y?: never } & CreateYAtomSharedOptions<YSource, T>);
 
 /**
  * Create a typed Jotai atom bound to a specific Y type.
@@ -101,8 +109,8 @@ export type CreateYAtomOptions<YType extends Y.AbstractType<any>, T> =
  * - Suppresses updates via equals.
  * - Writes are wrapped in `withTransact` and rely on Y events to propagate.
  */
-export function createYAtom<YType extends Y.AbstractType<any>, T>(
-  opts: CreateYAtomOptions<YType, T>
+export function createYAtom<YSource extends YType | null, T>(
+  opts: CreateYAtomOptions<YSource, T>
 ): WritableAtom<T, [T | ((prev: T) => T)], void> {
   const {
     read,
@@ -116,7 +124,7 @@ export function createYAtom<YType extends Y.AbstractType<any>, T>(
   const hasYAtom = 'yAtom' in opts && opts.yAtom !== undefined;
 
   // Normalize source: always use an Atom<YType> as the source of truth.
-  const ySourceAtom: Atom<YType> = hasYAtom
+  const ySourceAtom: Atom<YSource> = hasYAtom
     ? opts.yAtom
     : atom(opts.y);
 
@@ -125,19 +133,34 @@ export function createYAtom<YType extends Y.AbstractType<any>, T>(
   // Tracks the Y instance used to compute the current snapshot. This lets us
   // detect when the source Y changes (especially when resubscribing) and avoid
   // returning a stale snapshot.
-  const lastYAtom = atom<YType | null>(null);
+  const lastYAtom = atom<YSource | null>(null);
+
+  // For disabling resubscribe, capture the initial Y per-store and reuse it.
+  const yRefAtom = atom<YSource | null>(null);
+
+  // Helper that returns the currently active Y instance based on the
+  // resubscribe strategy.
+  const getActiveY = (get: <V>(a: Atom<V>) => V): YSource =>
+    resubscribeOnSourceChange
+      ? get(ySourceAtom)
+      : (get(yRefAtom) ?? get(ySourceAtom));
 
   // Derived state for consumers: SSR/first frame returns read(get(ySourceAtom)).
   // Public-facing read atom. It prefers the cached snapshot when available,
-  // but falls back to a direct read for SSR/first render. When the Y source
-  // instance changes (with resubscribe enabled), a fresh read is returned
-  // immediately until the subscription updates the snapshot.
+  // but falls back to a direct read for SSR/first render.
   const stateAtom = atom<T>((get) => {
     const y = get(ySourceAtom);
     const s = get(snapAtom);
+    const lastY = get(lastYAtom);
+    // When resubscribing is enabled, always fallback on source change.
+    // When disabled, only fallback for null -> non-null transitions (before
+    // the first sync pins the source). After pinning, lastY will match the
+    // pinned source and we use the cached snapshot.
     if (resubscribeOnSourceChange) {
-      const lastY = get(lastYAtom);
       if (lastY !== y) return read(y);
+    } else {
+      // Handle null -> non-null: lastY is null but source is now ready
+      if (lastY === null && y !== null) return read(y);
     }
     if (s !== UNSET) return s as T;
     return read(y);
@@ -151,26 +174,28 @@ export function createYAtom<YType extends Y.AbstractType<any>, T>(
   // - 'sync': run whenever Y emits an event to refresh the cached snapshot.
   type SubAction = { type: 'sync' } | { type: 'init' };
 
-  // For disabling resubscribe, capture the initial Y per-store and reuse it.
-  const yRefAtom = atom<YType | null>(null);
-  
-  // Helper that returns the currently active Y instance based on the
-  // resubscribe strategy.
-  const getActiveY = (get: <V>(a: Atom<V>) => V): YType =>
-    resubscribeOnSourceChange
-      ? get(ySourceAtom)
-      : (get(yRefAtom) ?? get(ySourceAtom));
-
   // Effect atom that owns the Y subscription and performs snapshot updates.
   const subscriptionAtom = atom<null, [SubAction?], void>(
     (get, { signal, setSelf }) => {
       // Determine which Y to subscribe to for this mount cycle.
       const y = getActiveY(get);
 
+      if (!y) {
+        // Source not ready; no subscription installed.
+        const cleanup = () => {};
+        signal.addEventListener('abort', cleanup);
+        return null;
+      }
+
       const unsubscribe = subscribeY(
         y,
         (evt, _tr) => {
-          if (!Array.isArray(evt) && eventFilter && !eventFilter(evt)) return;
+          if (
+            !Array.isArray(evt) &&
+            eventFilter &&
+            !eventFilter(evt as YEventOf<NonNullable<YSource>>)
+          )
+            return;
           setSelf({ type: 'sync' });
         },
         { deep }
@@ -191,8 +216,15 @@ export function createYAtom<YType extends Y.AbstractType<any>, T>(
     },
     (get, set, action) => {
       // 'sync' is the default action when events arrive or when setSelf() is
-      // called without an explicit action (Jotai’s convention).
+      // called without an explicit action (Jotai's convention).
       if (!action || action.type === 'sync') {
+        // When resubscribe is disabled and we haven't pinned yet, pin to the
+        // first non-null source we encounter (handles init-time null case).
+        if (!resubscribeOnSourceChange) {
+          const pinned = get(yRefAtom);
+          const current = get(ySourceAtom);
+          if (!pinned && current) set(yRefAtom, current);
+        }
         const y = getActiveY(get);
         const next = read(y);
         const prev = get(snapAtom);
@@ -205,12 +237,14 @@ export function createYAtom<YType extends Y.AbstractType<any>, T>(
       }
 
       // 'init' runs once on mount. When resubscribe is disabled, we capture
-      // the first Y instance and reuse it for the lifetime of the store. When
-      // the source is an atom (hasYAtom), we also seed the initial snapshot so
+      // the first non-null Y instance and reuse it for the lifetime of the store.
+      // When the source is an atom (hasYAtom), we also seed the initial snapshot so
       // the first read is consistent before any events fire.
       if (action.type === 'init') {
         if (!resubscribeOnSourceChange) {
-          set(yRefAtom, get(ySourceAtom));
+          const first = get(ySourceAtom);
+          // Only pin when we have a non-null source; null will fallback via ??
+          if (first) set(yRefAtom, first);
         }
         if (hasYAtom) {
           const y = getActiveY(get);
@@ -233,6 +267,12 @@ export function createYAtom<YType extends Y.AbstractType<any>, T>(
     (get, _set, update) => {
       if (!write) return;
       const y = getActiveY(get);
+      if (!y) {
+        if (process.env.NODE_ENV !== 'production') {
+          console.warn('[y-jotai] Y source is null; write is ignored.');
+        }
+        return;
+      }
       const current = read(y);
       const next =
         typeof update === 'function'
@@ -259,14 +299,14 @@ export function createYAtom<YType extends Y.AbstractType<any>, T>(
  * Y.Map key atom: subscribes only when `key` is changed. Use decode/encode for type safety.
  */
 export function createYMapKeyAtom<
-  TValue,
-  TSnapshot extends TValue | undefined = TValue | undefined
+  TMap extends Y.Map<any>,
+  TSnapshot = YMapValue<TMap> | undefined
 >(
-  map: Y.Map<TValue>,
+  map: TMap,
   key: string,
   opts?: {
-    decode?: (v: TValue | undefined) => TSnapshot;
-    encode?: (v: TSnapshot) => TValue;
+    decode?: (v: YMapValue<TMap> | undefined) => TSnapshot;
+    encode?: (v: TSnapshot) => YMapValue<TMap>;
     equals?: Equals<TSnapshot>;
   }
 ): WritableAtom<
@@ -280,6 +320,7 @@ export function createYMapKeyAtom<
     }
   }
 
+  type TValue = YMapValue<TMap>;
   const decode: (value: TValue | undefined) => TSnapshot =
     opts?.decode ?? ((value) => value as TSnapshot);
   const encode: (value: TSnapshot) => TValue =
@@ -289,7 +330,7 @@ export function createYMapKeyAtom<
 
   return createYAtom({
     y: map,
-    read: (m) => decode(m.get(key)),
+    read: (m) => decode(m.get(key) as TValue | undefined),
     write: (m, next) => {
       m.set(key, encode(next));
     },
@@ -299,7 +340,7 @@ export function createYMapKeyAtom<
 }
 
 /** Options for createYMapEntryAtom. */
-export interface CreateYMapEntryAtomOptions<TEntry extends Y.AbstractType<any>> {
+export interface CreateYMapEntryAtomOptions<TEntry extends YStorableType> {
   /**
    * Optional type guard to validate the stored value matches TEntry.
    * If provided and the value fails the guard, null is returned.
@@ -335,8 +376,11 @@ export interface CreateYMapEntryAtomOptions<TEntry extends Y.AbstractType<any>> 
  * set(blockAtom, null)
  * ```
  */
-export function createYMapEntryAtom<TEntry extends Y.AbstractType<any>>(
-  map: Y.Map<TEntry | null>,
+export function createYMapEntryAtom<
+  TMap extends Y.Map<any>,
+  TEntry extends YStorableType = Extract<YMapValue<TMap>, YStorableType>
+>(
+  map: TMap,
   key: string,
   opts?: CreateYMapEntryAtomOptions<TEntry>
 ): WritableAtom<
@@ -344,8 +388,11 @@ export function createYMapEntryAtom<TEntry extends Y.AbstractType<any>>(
   [TEntry | null | ((prev: TEntry | null) => TEntry | null)],
   void
 >;
-export function createYMapEntryAtom<TEntry extends Y.AbstractType<any>>(
-  mapAtom: Atom<Y.Map<TEntry | null>>,
+export function createYMapEntryAtom<
+  TMap extends Y.Map<any>,
+  TEntry extends YStorableType = Extract<YMapValue<TMap>, YStorableType>
+>(
+  mapAtom: Atom<TMap | null>,
   key: string,
   opts?: CreateYMapEntryAtomOptions<TEntry>
 ): WritableAtom<
@@ -353,26 +400,11 @@ export function createYMapEntryAtom<TEntry extends Y.AbstractType<any>>(
   [TEntry | null | ((prev: TEntry | null) => TEntry | null)],
   void
 >;
-export function createYMapEntryAtom<TEntry extends Y.AbstractType<any>>(
-  map: Y.Map<unknown>,
-  key: string,
-  opts?: CreateYMapEntryAtomOptions<TEntry>
-): WritableAtom<
-  TEntry | null,
-  [TEntry | null | ((prev: TEntry | null) => TEntry | null)],
-  void
->;
-export function createYMapEntryAtom<TEntry extends Y.AbstractType<any>>(
-  mapAtom: Atom<Y.Map<unknown>>,
-  key: string,
-  opts?: CreateYMapEntryAtomOptions<TEntry>
-): WritableAtom<
-  TEntry | null,
-  [TEntry | null | ((prev: TEntry | null) => TEntry | null)],
-  void
->;
-export function createYMapEntryAtom<TEntry extends Y.AbstractType<any>>(
-  map: Y.Map<unknown> | Atom<Y.Map<unknown>>,
+export function createYMapEntryAtom<
+  TMap extends Y.Map<any>,
+  TEntry extends YStorableType = Extract<YMapValue<TMap>, YStorableType>
+>(
+  map: TMap | Atom<TMap | null> | null,
   key: string,
   opts?: CreateYMapEntryAtomOptions<TEntry>
 ): WritableAtom<
@@ -386,7 +418,7 @@ export function createYMapEntryAtom<TEntry extends Y.AbstractType<any>>(
     }
   }
 
-  const isAtom = (value: unknown): value is Atom<Y.Map<unknown>> =>
+  const isAtom = (value: unknown): value is Atom<TMap | null> =>
     typeof value === 'object' &&
     value !== null &&
     'read' in (value as Record<string, unknown>) &&
@@ -397,20 +429,27 @@ export function createYMapEntryAtom<TEntry extends Y.AbstractType<any>>(
   const deleteOnNull = opts?.deleteOnNull ?? false;
   const resubscribeOnSourceChange = opts?.resubscribeOnSourceChange ?? false;
 
-  const readEntry = (m: Y.Map<unknown>): TEntry | null => {
+  const readEntry = (m: TMap | null): TEntry | null => {
+    if (!m) return null;
     const value = m.get(key);
     if (typeGuard) return typeGuard(value) ? value : null;
     return value instanceof Y.AbstractType ? (value as TEntry) : null;
   };
 
-  const mapAtom: Atom<Y.Map<unknown>> = isAtom(map)
+  const mapAtom: Atom<TMap | null> = isAtom(map)
     ? map
-    : atom(map as Y.Map<unknown>);
+    : atom((map as TMap | null) ?? null);
 
   return createYAtom({
     yAtom: mapAtom,
     read: (m) => readEntry(m),
     write: (m, next) => {
+      if (!m) {
+        if (process.env.NODE_ENV !== 'production') {
+          console.warn('[y-jotai] Map source is null; write is ignored.');
+        }
+        return;
+      }
       if (next === null && deleteOnNull) {
         m.delete(key);
       } else {
@@ -547,7 +586,7 @@ export interface CreateYMapFieldsAtomOptions<T> {
  * ```
  */
 export function createYMapFieldsAtom<
-  TRecord extends Record<string, any>,
+  TRecord extends Record<string, unknown>,
   const Keys extends readonly (keyof TRecord & string)[]
 >(
   map: Y.Map<TRecord[keyof TRecord]>,
@@ -656,7 +695,7 @@ export function createYMapFieldsAtom(
     eventFilter: (evt) => {
       if (!evt.keysChanged) return true;
       for (const key of keySet) {
-        if (evt.keysChanged.has(key as any)) return true;
+        if (evt.keysChanged.has(key)) return true;
       }
       return false;
     },
