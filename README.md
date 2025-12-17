@@ -18,6 +18,8 @@ Thin, typed bridge between Yjs types and Jotai atoms.
 
 ## Installation
 
+Want to see our vibe coding demo? [Try it now](/demo)
+
 ```bash
 npm install y-jotai jotai yjs
 ```
