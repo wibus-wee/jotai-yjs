@@ -11,8 +11,8 @@
   },
   "dependencies": {
     "jotai": "^2.16.0",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
     "react-scan": "^0.4.3",
     "y-jotai": "^0.4.0",
     "y-websocket": "^1.5.4",
