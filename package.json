@@ -45,7 +45,7 @@
     "tinybench": "^6.0.0",
     "tsdown": "^0.17.2",
     "typescript": "^5.9.3",
-    "vitest": "^4.0.15",
+    "vitest": "^4.0.16",
     "yjs": "^13.6.27"
   },
   "peerDependencies": {
