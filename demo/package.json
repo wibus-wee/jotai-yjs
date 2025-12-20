@@ -16,7 +16,7 @@
     "react-scan": "^0.4.3",
     "y-jotai": "^0.4.0",
     "y-websocket": "^1.5.4",
-    "yjs": "^13.6.27"
+    "yjs": "^13.6.28"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
