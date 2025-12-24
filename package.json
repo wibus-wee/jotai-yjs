@@ -39,7 +39,7 @@
   "devDependencies": {
     "@types/node": "^24.10.4",
     "bumpp": "^10.3.2",
-    "eslint-config-hyoban": "^4.0.10",
+    "eslint-config-hyoban": "^4.1.0",
     "jotai": "^2.16.0",
     "react": "^19.2.3",
     "tinybench": "^6.0.0",
