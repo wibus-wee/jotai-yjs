@@ -25,8 +25,8 @@ importers:
         specifier: ^4.1.0
         version: 4.1.0(@types/estree@1.0.8)(@typescript-eslint/eslint-plugin@8.50.1(@typescript-eslint/parser@8.50.1(eslint@9.37.0(jiti@2.6.1))(typescript@5.9.3))(eslint@9.37.0(jiti@2.6.1))(typescript@5.9.3))(@typescript-eslint/utils@8.50.1(eslint@9.37.0(jiti@2.6.1))(typescript@5.9.3))(eslint@9.37.0(jiti@2.6.1))(tailwindcss@4.1.14)(typescript@5.9.3)
       jotai:
-        specifier: ^2.16.0
-        version: 2.16.0(@babel/core@7.28.4)(@babel/template@7.27.2)(react@19.2.3)
+        specifier: ^2.16.1
+        version: 2.16.1(@babel/core@7.28.4)(@babel/template@7.27.2)(react@19.2.3)
       react:
         specifier: ^19.2.3
         version: 19.2.3
@@ -1522,8 +1522,8 @@ packages:
     resolution: {integrity: sha512-ekilCSN1jwRvIbgeg/57YFh8qQDNbwDb9xT/qu2DAHbFFZUicIl4ygVaAvzveMhMVr3LnpSKTNnwt8PoOfmKhQ==}
     hasBin: true
 
-  jotai@2.16.0:
-    resolution: {integrity: sha512-NmkwPBet0SHQ28GBfEb10sqnbVOYyn6DL4iazZgGRDUKxSWL0iqcm+IK4TqTSFC2ixGk+XX2e46Wbv364a3cKg==}
+  jotai@2.16.1:
+    resolution: {integrity: sha512-vrHcAbo3P7Br37C8Bv6JshMtlKMPqqmx0DDREtTjT4nf3QChDrYdbH+4ik/9V0cXA57dK28RkJ5dctYvavcIlg==}
     engines: {node: '>=12.20.0'}
     peerDependencies:
       '@babel/core': '>=7.0.0'
@@ -3733,7 +3733,7 @@ snapshots:
 
   jiti@2.6.1: {}
 
-  jotai@2.16.0(@babel/core@7.28.4)(@babel/template@7.27.2)(react@19.2.3):
+  jotai@2.16.1(@babel/core@7.28.4)(@babel/template@7.27.2)(react@19.2.3):
     optionalDependencies:
       '@babel/core': 7.28.4
       '@babel/template': 7.27.2
