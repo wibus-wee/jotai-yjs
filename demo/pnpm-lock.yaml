@@ -13,7 +13,7 @@ importers:
     dependencies:
       jotai:
         specifier: ^2.16.1
-        version: 2.16.1(@babel/core@7.28.5)(@babel/template@7.27.2)(@types/react@19.2.7)(react@19.2.3)
+        version: 2.16.1(@babel/core@7.28.5)(@babel/template@7.27.2)(@types/react@19.2.8)(react@19.2.3)
       react:
         specifier: ^19.2.3
         version: 19.2.3
@@ -22,10 +22,10 @@ importers:
         version: 19.2.3(react@19.2.3)
       react-scan:
         specifier: ^0.4.3
-        version: 0.4.3(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+        version: 0.4.3(@types/react@19.2.8)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       y-jotai:
         specifier: ^0.4.0
-        version: 0.4.0(jotai@2.16.1(@babel/core@7.28.5)(@babel/template@7.27.2)(@types/react@19.2.7)(react@19.2.3))(react@19.2.3)(yjs@13.6.29)
+        version: 0.4.0(jotai@2.16.1(@babel/core@7.28.5)(@babel/template@7.27.2)(@types/react@19.2.8)(react@19.2.3))(react@19.2.3)(yjs@13.6.29)
       y-websocket:
         specifier: ^1.5.4
         version: 1.5.4(yjs@13.6.29)
@@ -40,11 +40,11 @@ importers:
         specifier: ^24.10.4
         version: 24.10.4
       '@types/react':
-        specifier: ^19.2.7
-        version: 19.2.7
+        specifier: ^19.2.8
+        version: 19.2.8
       '@types/react-dom':
         specifier: ^19.2.3
-        version: 19.2.3(@types/react@19.2.7)
+        version: 19.2.3(@types/react@19.2.8)
       '@vitejs/plugin-react':
         specifier: ^5.1.2
         version: 5.1.2(rolldown-vite@7.2.11(@types/node@24.10.4)(esbuild@0.25.12)(tsx@4.21.0))
@@ -711,8 +711,8 @@ packages:
     peerDependencies:
       '@types/react': '*'
 
-  '@types/react@19.2.7':
-    resolution: {integrity: sha512-MWtvHrGZLFttgeEj28VXHxpmwYbor/ATPYbBfSFZEIRK0ecCFLl2Qo55z52Hss+UV9CRN7trSeq1zbgx7YDWWg==}
+  '@types/react@19.2.8':
+    resolution: {integrity: sha512-3MbSL37jEchWZz2p2mjntRZtPt837ij10ApxKfgmXCTuHWagYg7iA5bqPw6C8BMPfwidlvfPI/fxOc42HLhcyg==}
 
   '@typescript-eslint/eslint-plugin@8.52.0':
     resolution: {integrity: sha512-okqtOgqu2qmZJ5iN4TWlgfF171dZmx2FzdOv2K/ixL2LZWDStL8+JgQerI2sa8eAEfoydG9+0V96m7V+P8yE1Q==}
@@ -2131,15 +2131,15 @@ snapshots:
     dependencies:
       undici-types: 7.16.0
 
-  '@types/react-dom@19.2.3(@types/react@19.2.7)':
+  '@types/react-dom@19.2.3(@types/react@19.2.8)':
     dependencies:
-      '@types/react': 19.2.7
+      '@types/react': 19.2.8
 
-  '@types/react-reconciler@0.28.9(@types/react@19.2.7)':
+  '@types/react-reconciler@0.28.9(@types/react@19.2.8)':
     dependencies:
-      '@types/react': 19.2.7
+      '@types/react': 19.2.8
 
-  '@types/react@19.2.7':
+  '@types/react@19.2.8':
     dependencies:
       csstype: 3.2.3
 
@@ -2297,9 +2297,9 @@ snapshots:
 
   baseline-browser-mapping@2.9.8: {}
 
-  bippy@0.3.34(@types/react@19.2.7)(react@19.2.3):
+  bippy@0.3.34(@types/react@19.2.8)(react@19.2.3):
     dependencies:
-      '@types/react-reconciler': 0.28.9(@types/react@19.2.7)
+      '@types/react-reconciler': 0.28.9(@types/react@19.2.8)
       react: 19.2.3
     transitivePeerDependencies:
       - '@types/react'
@@ -2620,11 +2620,11 @@ snapshots:
 
   isomorphic.js@0.2.5: {}
 
-  jotai@2.16.1(@babel/core@7.28.5)(@babel/template@7.27.2)(@types/react@19.2.7)(react@19.2.3):
+  jotai@2.16.1(@babel/core@7.28.5)(@babel/template@7.27.2)(@types/react@19.2.8)(react@19.2.3):
     optionalDependencies:
       '@babel/core': 7.28.5
       '@babel/template': 7.27.2
-      '@types/react': 19.2.7
+      '@types/react': 19.2.8
       react: 19.2.3
 
   js-tokens@4.0.0: {}
@@ -2867,7 +2867,7 @@ snapshots:
 
   react-refresh@0.18.0: {}
 
-  react-scan@0.4.3(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3):
+  react-scan@0.4.3(@types/react@19.2.8)(react-dom@19.2.3(react@19.2.3))(react@19.2.3):
     dependencies:
       '@babel/core': 7.28.5
       '@babel/generator': 7.28.5
@@ -2878,7 +2878,7 @@ snapshots:
       '@preact/signals': 1.3.2(preact@10.28.0)
       '@rollup/pluginutils': 5.3.0
       '@types/node': 20.19.27
-      bippy: 0.3.34(@types/react@19.2.7)(react@19.2.3)
+      bippy: 0.3.34(@types/react@19.2.8)(react@19.2.3)
       esbuild: 0.25.12
       estree-walker: 3.0.3
       kleur: 4.1.5
@@ -3048,11 +3048,11 @@ snapshots:
   xtend@4.0.2:
     optional: true
 
-  y-jotai@0.4.0(jotai@2.16.1(@babel/core@7.28.5)(@babel/template@7.27.2)(@types/react@19.2.7)(react@19.2.3))(react@19.2.3)(yjs@13.6.29):
+  y-jotai@0.4.0(jotai@2.16.1(@babel/core@7.28.5)(@babel/template@7.27.2)(@types/react@19.2.8)(react@19.2.3))(react@19.2.3)(yjs@13.6.29):
     dependencies:
       es-toolkit: 1.43.0
       fast-diff: 1.3.0
-      jotai: 2.16.1(@babel/core@7.28.5)(@babel/template@7.27.2)(@types/react@19.2.7)(react@19.2.3)
+      jotai: 2.16.1(@babel/core@7.28.5)(@babel/template@7.27.2)(@types/react@19.2.8)(react@19.2.3)
       react: 19.2.3
       yjs: 13.6.29
 
