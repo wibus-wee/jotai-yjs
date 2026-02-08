@@ -19,8 +19,8 @@ importers:
         specifier: ^24.10.11
         version: 24.10.11
       bumpp:
-        specifier: ^10.4.0
-        version: 10.4.0
+        specifier: ^10.4.1
+        version: 10.4.1
       eslint-config-hyoban:
         specifier: ^4.1.0
         version: 4.1.0(@types/estree@1.0.8)(@typescript-eslint/eslint-plugin@8.50.1(@typescript-eslint/parser@8.50.1(eslint@9.37.0(jiti@2.6.1))(typescript@5.9.3))(eslint@9.37.0(jiti@2.6.1))(typescript@5.9.3))(@typescript-eslint/utils@8.50.1(eslint@9.37.0(jiti@2.6.1))(typescript@5.9.3))(eslint@9.37.0(jiti@2.6.1))(tailwindcss@4.1.14)(typescript@5.9.3)
@@ -962,8 +962,8 @@ packages:
     resolution: {integrity: sha512-bkXY9WsVpY7CvMhKSR6pZilZu9Ln5WDrKVBUXf2S443etkmEO4V58heTecXcUIsNsi4Rx8JUO4NfX1IcQl4deg==}
     engines: {node: '>=18.20'}
 
-  bumpp@10.4.0:
-    resolution: {integrity: sha512-VzJhB4iyZ04w99HreEvXJY/lxzApnE/PRbcFY4cKnOUSRVbRbAf0AIU0DeavrkffW+mclJlkmnQYn9NdwcBk1g==}
+  bumpp@10.4.1:
+    resolution: {integrity: sha512-X/bwWs5Gbb/D7rN4aHLB7zdjiA6nGdjckM1sTHhI9oovIbEw2L5pw5S4xzk8ZTeOZ8EnwU/Ze4SoZ6/Vr3pM2Q==}
     engines: {node: '>=18'}
     hasBin: true
 
@@ -3092,7 +3092,7 @@ snapshots:
 
   builtin-modules@5.0.0: {}
 
-  bumpp@10.4.0:
+  bumpp@10.4.1:
     dependencies:
       ansis: 4.2.0
       args-tokenizer: 0.3.0
