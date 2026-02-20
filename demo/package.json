@@ -13,7 +13,7 @@
     "jotai": "^2.16.2",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "react-scan": "^0.4.3",
+    "react-scan": "^0.5.3",
     "y-jotai": "^0.4.0",
     "y-websocket": "^1.5.4",
     "yjs": "^13.6.29"
