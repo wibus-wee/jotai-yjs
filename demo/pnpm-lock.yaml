@@ -12,8 +12,8 @@ importers:
   .:
     dependencies:
       jotai:
-        specifier: ^2.16.2
-        version: 2.16.2(@babel/core@7.29.0)(@babel/template@7.28.6)(@types/react@19.2.14)(react@19.2.4)
+        specifier: ^2.18.0
+        version: 2.18.0(@babel/core@7.29.0)(@babel/template@7.28.6)(@types/react@19.2.14)(react@19.2.4)
       react:
         specifier: ^19.2.4
         version: 19.2.4
@@ -25,7 +25,7 @@ importers:
         version: 0.4.3(@types/react@19.2.14)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       y-jotai:
         specifier: ^0.4.0
-        version: 0.4.0(jotai@2.16.2(@babel/core@7.29.0)(@babel/template@7.28.6)(@types/react@19.2.14)(react@19.2.4))(react@19.2.4)(yjs@13.6.29)
+        version: 0.4.0(jotai@2.18.0(@babel/core@7.29.0)(@babel/template@7.28.6)(@types/react@19.2.14)(react@19.2.4))(react@19.2.4)(yjs@13.6.29)
       y-websocket:
         specifier: ^1.5.4
         version: 1.5.4(yjs@13.6.29)
@@ -1164,8 +1164,8 @@ packages:
   isomorphic.js@0.2.5:
     resolution: {integrity: sha512-PIeMbHqMt4DnUP3MA/Flc0HElYjMXArsw1qwJZcm9sqR8mq3l8NYizFMty0pWwE/tzIGH3EKK5+jes5mAr85yw==}
 
-  jotai@2.16.2:
-    resolution: {integrity: sha512-DH0lBiTXvewsxtqqwjDW6Hg9JPTDnq9LcOsXSFWCAUEt+qj5ohl9iRVX9zQXPPHKLXCdH+5mGvM28fsXMl17/g==}
+  jotai@2.18.0:
+    resolution: {integrity: sha512-XI38kGWAvtxAZ+cwHcTgJsd+kJOJGf3OfL4XYaXWZMZ7IIY8e53abpIHvtVn1eAgJ5dlgwlGFnP4psrZ/vZbtA==}
     engines: {node: '>=12.20.0'}
     peerDependencies:
       '@babel/core': '>=7.0.0'
@@ -2782,7 +2782,7 @@ snapshots:
 
   isomorphic.js@0.2.5: {}
 
-  jotai@2.16.2(@babel/core@7.29.0)(@babel/template@7.28.6)(@types/react@19.2.14)(react@19.2.4):
+  jotai@2.18.0(@babel/core@7.29.0)(@babel/template@7.28.6)(@types/react@19.2.14)(react@19.2.4):
     optionalDependencies:
       '@babel/core': 7.29.0
       '@babel/template': 7.28.6
@@ -3210,11 +3210,11 @@ snapshots:
   xtend@4.0.2:
     optional: true
 
-  y-jotai@0.4.0(jotai@2.16.2(@babel/core@7.29.0)(@babel/template@7.28.6)(@types/react@19.2.14)(react@19.2.4))(react@19.2.4)(yjs@13.6.29):
+  y-jotai@0.4.0(jotai@2.18.0(@babel/core@7.29.0)(@babel/template@7.28.6)(@types/react@19.2.14)(react@19.2.4))(react@19.2.4)(yjs@13.6.29):
     dependencies:
       es-toolkit: 1.43.0
       fast-diff: 1.3.0
-      jotai: 2.16.2(@babel/core@7.29.0)(@babel/template@7.28.6)(@types/react@19.2.14)(react@19.2.4)
+      jotai: 2.18.0(@babel/core@7.29.0)(@babel/template@7.28.6)(@types/react@19.2.14)(react@19.2.4)
       react: 19.2.4
       yjs: 13.6.29
 
